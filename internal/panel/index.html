@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>模型提示词管理</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--line:#e3e6ea;--txt:#1d2329;--mute:#6b7480;--pri:#2563eb;--ok:#16a34a;--warn:#d97706;--bad:#dc2626}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt)}
+header{position:sticky;top:0;z-index:5;background:#111827;color:#fff;padding:10px 18px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:16px;margin:0 12px 0 0}header .meta{color:#cbd5e1;font-size:12px}header .sp{flex:1}
+main{max-width:1280px;margin:0 auto;padding:16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:16px}
+section h2{font-size:15px;margin:0 0 10px;display:flex;gap:8px;align-items:center}
+button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{border-color:var(--pri)}button.pri{background:var(--pri);color:#fff;border-color:var(--pri)}
+button.bad{color:var(--bad)}button:disabled{opacity:.5;cursor:default}
+input,textarea,select{font:inherit;border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:#fff;color:inherit}
+textarea{width:100%;min-height:140px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600}
+.tag{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:999px;background:#eef2ff;color:#3730a3;white-space:nowrap}
+.tag.ok{background:#dcfce7;color:#166534}.tag.warn{background:#fef3c7;color:#92400e}.tag.bad{background:#fee2e2;color:#991b1b}.tag.mute{background:#f1f5f9;color:#475569}
+.mute{color:var(--mute)}.small{font-size:12px}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+.pre{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#f8fafc;border:1px solid var(--line);border-radius:6px;padding:8px;max-height:320px;overflow:auto}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.cand{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px}
+.conflict{border:2px solid var(--warn);border-radius:10px;padding:12px;margin-bottom:12px;background:#fffbeb}
+.prev{max-height:60px;overflow:hidden;color:var(--mute);font-size:12px;white-space:pre-wrap;word-break:break-word}
+#auth{max-width:460px;margin:12vh auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px}
+#auth input{width:100%;margin:10px 0}
+#toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:9}
+.hidden{display:none!important}
+.log{max-height:300px;overflow:auto;background:#0b1020;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:8px;border-radius:6px;white-space:pre-wrap}
+@media (max-width:720px){header{align-items:flex-start}table{display:block;overflow-x:auto}}
+</style>
+</head>
+<body>
+<div id="auth" class="hidden">
+  <h2 style="margin-top:0">模型提示词管理</h2>
+  <div class="mute small">使用 CPA 管理密钥登录。管理中心已记住密钥时会自动连接，不会再要一套单独的密码。</div>
+  <input id="pw" type="password" autocomplete="current-password" placeholder="CPA 管理密钥">
+  <button class="pri" id="loginBtn" style="width:100%">连接</button>
+  <div id="loginErr" style="color:var(--bad);margin-top:8px"></div>
+</div>
+
+<div id="app" class="hidden">
+<header>
+  <h1>模型提示词管理</h1>
+  <span class="meta" id="hdrMeta"></span>
+  <span class="sp"></span>
+  <span class="meta" id="syncState"></span>
+  <button class="pri" id="syncBtn">立即同步</button>
+  <button id="refreshBtn">刷新</button>
+  <button id="logoutBtn">忘记本页密钥</button>
+</header>
+<main>
+  <section id="secErr" class="hidden">
+    <h2>模型列表不可用</h2>
+    <div id="statusErr" class="small" style="color:var(--bad)"></div>
+  </section>
+  <section id="secConflicts" class="hidden">
+    <h2>⚠️ 待处理的重复匹配 <span class="tag warn" id="conflictCount"></span></h2>
+    <div class="mute small" style="margin-bottom:8px">同一个模型匹配到多个候选时不会自动选择。选择要保留的一份；在你选择前继续使用上一次的提示词（没有则用默认提示词）。之后只有当选中的文件消失或出现新的候选时才会再次询问。</div>
+    <div id="conflicts"></div>
+  </section>
+
+  <section>
+    <h2>仓库来源 <span class="mute small">（顺序仅用于显示；可填多个）</span></h2>
+    <table><thead><tr><th style="width:36%">链接</th><th>分支 / 子目录</th><th>状态</th><th style="width:320px">操作</th></tr></thead><tbody id="repos"></tbody></table>
+    <div class="row" style="margin-top:10px">
+      <input id="rUrl" style="flex:3;min-width:260px" placeholder="GitHub / GitLab / Codeberg 仓库链接，或 raw 文件链接，或 owner/repo">
+      <input id="rBranch" style="flex:1;min-width:90px" placeholder="分支（可选）">
+      <input id="rSub" style="flex:1;min-width:110px" placeholder="子目录（可选）">
+      <input id="rTok" style="flex:1;min-width:120px" type="password" autocomplete="off" placeholder="Token（私有库可选）">
+      <button class="pri" id="addRepo">添加并同步</button>
+    </div>
+    <div class="mute small" style="margin-top:6px">支持 https 链接（含 /tree/分支/子目录 形式）。扫描 .md .txt .json .yaml 文件（跳过 README / LICENSE 等）。Token 只存在服务器状态文件里，接口不会把它送回浏览器。</div>
+  </section>
+
+  <section>
+    <h2>模型与当前提示词 <span class="mute small" id="modelMeta"></span></h2>
+    <div class="row" style="margin-bottom:8px"><input id="mFilter" placeholder="筛选模型…" style="min-width:220px">
+      <label class="small"><input type="checkbox" id="onlyPrompt"> 只看有提示词的</label></div>
+    <table><thead><tr><th style="width:26%">模型</th><th style="width:20%">来源 / 分数</th><th>当前提示词</th><th style="width:90px"></th></tr></thead><tbody id="models"></tbody></table>
+  </section>
+
+  <section>
+    <h2>默认提示词 <span class="mute small">（没有任何匹配、也没有本地提示词的模型使用；留空 = 不注入）</span></h2>
+    <textarea id="defaultPrompt" style="min-height:80px"></textarea>
+    <div class="row" style="margin-top:6px"><button class="pri" id="saveDefault">保存默认提示词</button></div>
+  </section>
+
+  <section>
+    <h2>匹配概览</h2>
+    <div class="grid">
+      <div><b>未匹配到文件的模型</b> <span class="tag mute" id="unmCount"></span><div id="unmatched" class="small mono" style="margin-top:6px;max-height:260px;overflow:auto"></div></div>
+      <div><b>未使用的文件</b> <span class="tag mute" id="unusedCount"></span>
+        <input id="uFilter" placeholder="筛选文件…" style="width:100%;margin-top:6px">
+        <div id="unused" class="small" style="margin-top:6px;max-height:260px;overflow:auto"></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>同步日志 <span class="mute small">插件内默认定时同步（每小时），模型列表或配置变化后自动重算（约 15 秒）</span></h2>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+</div>
+
+<div id="editDlg" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8;display:flex;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:18px;width:min(900px,96vw);max-height:92vh;overflow:auto">
+    <h2 style="margin:0 0 4px;font-size:16px">编辑：<span class="mono" id="eModel"></span></h2>
+    <div class="small mute" id="eInfo" style="margin-bottom:8px"></div>
+    <textarea id="eText" style="min-height:240px"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="pri" id="eSaveLocal" title="作为本地提示词保存；如果仓库也匹配到文件，会作为候选之一让你选择">保存为本地提示词</button>
+      <button id="eSaveOverride" title="强制使用这段文字，优先级最高，忽略自动匹配">保存为强制覆盖</button>
+      <button class="bad" id="eDelLocal">删除本地提示词</button>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+    <div class="small"><b>手动指定文件（覆盖自动匹配）</b></div>
+    <div class="row" style="margin-top:6px">
+      <input id="eFile" list="fileList" style="flex:1;min-width:300px" placeholder="输入文件名搜索，选择任意仓库里的文件">
+      <datalist id="fileList"></datalist>
+      <button id="eSaveFile">使用这个文件</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="eNone">强制不注入</button>
+      <button id="eClear">清除覆盖（恢复自动匹配）</button>
+      <span class="sp" style="flex:1"></span>
+      <button id="eClose">关闭</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const API='/v0/management/plugins/prompt-admin';
+const CPA_STORAGE_PREFIX='enc::v1::';
+const CPA_STORAGE_SALT='cli-proxy-api-webui::secure-storage';
+const SESSION_KEY='cpa_prompt_admin_key';
+let S=null, fileByLabel={}, polling=null;
+function el(tag,attrs={},...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')e.className=v;else if(k.startsWith('on'))e.addEventListener(k.slice(2),v);else if(v!==undefined&&v!==null)e.setAttribute(k,v)}for(const c of kids.flat()){if(c==null)continue;e.append(c.nodeType?c:document.createTextNode(String(c)))}return e}
+function toast(m,ms=3000){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',ms)}
+function safeLocalStorage(){try{return window.localStorage}catch(_e){return null}}
+function safeSessionStorage(){try{return window.sessionStorage}catch(_e){return null}}
+function readStorageText(storage,name){try{return String(storage&&storage.getItem(name)||'').trim()}catch(_e){return ''}}
+function writeStorageText(storage,name,value){try{if(storage)storage.setItem(name,value)}catch(_e){}}
+function removeStorageValue(storage,name){try{if(storage)storage.removeItem(name)}catch(_e){}}
+function firstText(...values){for(const value of values){if(typeof value==='string'&&value.trim())return value.trim()}return ''}
+function parseStoredValue(value){if(!value)return null;try{return JSON.parse(value)}catch(_e){return value}}
+function decodeCPAStorage(value){
+  if(!value||!value.startsWith(CPA_STORAGE_PREFIX))return value;
+  try{
+    const data=Uint8Array.from(atob(value.slice(CPA_STORAGE_PREFIX.length)),character=>character.charCodeAt(0));
+    const key=new TextEncoder().encode(CPA_STORAGE_SALT+'|'+window.location.host+'|'+navigator.userAgent);
+    const decoded=new Uint8Array(data.length);
+    for(let index=0;index<data.length;index++)decoded[index]=data[index]^key[index%key.length];
+    return new TextDecoder().decode(decoded);
+  }catch(_e){return ''}
+}
+function readCPAStorageValue(storage,name){const raw=readStorageText(storage,name);if(!raw)return null;const decoded=decodeCPAStorage(raw);return parseStoredValue(decoded||raw)}
+function readCPAAuthStoreKey(storage){const auth=readCPAStorageValue(storage,'cli-proxy-auth');if(!auth||typeof auth!=='object')return '';return firstText(auth.state&&auth.state.managementKey,auth.managementKey)}
+function storedManagementKey(){
+  const session=safeSessionStorage(), local=safeLocalStorage();
+  return firstText(readCPAStorageValue(session,'managementKey'),readCPAStorageValue(local,'managementKey'),readCPAAuthStoreKey(session),readCPAAuthStoreKey(local),readStorageText(session,SESSION_KEY));
+}
+function managementKey(){const typed=$('#pw').value.trim();if(typed){writeStorageText(safeSessionStorage(),SESSION_KEY,typed);return typed}return storedManagementKey()}
+function showAuth(msg){$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');$('#loginErr').textContent=msg||'';$('#pw').focus()}
+async function api(path,body){
+  const key=managementKey();
+  if(!key){showAuth('请输入 CPA 管理密钥');throw new Error('未连接')}
+  const opt=body===undefined?{headers:{Authorization:'Bearer '+key,Accept:'application/json'}}:{method:'POST',headers:{Authorization:'Bearer '+key,Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify(body)};
+  const r=await fetch(API+'/'+path,opt);let j={};try{j=await r.json()}catch(e){}
+  if(r.status===401){removeStorageText();showAuth('管理密钥被拒绝');throw new Error('管理密钥被拒绝')}
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  writeStorageText(safeSessionStorage(),SESSION_KEY,key);
+  return j
+}
+function removeStorageText(){removeStorageValue(safeSessionStorage(),SESSION_KEY);$('#pw').value=''}
+async function login(){$('#loginErr').textContent='';try{await load()}catch(e){$('#loginErr').textContent=e.message}}
+$('#loginBtn').onclick=login;$('#pw').onkeydown=e=>{if(e.key==='Enter')login()};
+$('#logoutBtn').onclick=()=>{removeStorageText();showAuth('已清除本页记住的管理密钥')};
+$('#refreshBtn').onclick=()=>load();
+$('#syncBtn').onclick=async()=>{try{const j=await api('sync',{});toast(j.msg||'已开始同步');startPoll()}catch(e){toast(e.message)}};
+async function act(path,body,msg){try{const j=await api(path,body);toast(j.msg||msg||'已保存');await load();if(j.msg&&j.msg.includes('同步'))startPoll();return true}catch(e){toast('失败：'+e.message,5000);return false}}
+function startPoll(){if(polling)return;polling=setInterval(async()=>{await load();if(S&&!S.sync.running){clearInterval(polling);polling=null}},2000)}
+const SRC={'override-text':['强制覆盖（文字）','bad'],'override-file':['强制覆盖（文件）','bad'],'override-none':['强制不注入','mute'],local:['本地提示词','ok'],repo:['仓库自动匹配','ok'],chosen:['已选择（去重）','ok'],default:['默认提示词','mute'],conflict:['待选择（重复）','warn'],none:['无','mute']};
+async function load(){
+  let j;try{j=await api('state')}catch(e){return}
+  S=j;$('#app').classList.remove('hidden');$('#auth').classList.add('hidden');
+  const st=j.status||{};
+  $('#hdrMeta').textContent=`上次同步：${st.last_sync||'从未'} ｜ 上次计算：${st.last_run||'-'}（${st.reason||''}）`;
+  $('#syncState').textContent=j.sync&&j.sync.running?'⏳ 同步中…':'';$('#syncBtn').disabled=!!(j.sync&&j.sync.running);
+  if(j.sync&&j.sync.running)startPoll();
+  $('#secErr').classList.toggle('hidden',!st.error);$('#statusErr').textContent=st.error||'';
+  renderRepos(j,st);renderConflicts(st);renderModels(st);renderLists(st);
+  if(document.activeElement!==$('#defaultPrompt'))$('#defaultPrompt').value=j.default_prompt||'';
+  const lg=$('#log');lg.textContent=(j.log||[]).join('\n');lg.scrollTop=lg.scrollHeight;
+  fileByLabel={};const dl=$('#fileList');dl.innerHTML='';for(const f of st.files||[]){fileByLabel[f.label]=f.key;dl.append(el('option',{value:f.label}))}
+}
+function renderRepos(j,st){const tb=$('#repos');tb.innerHTML='';
+  if(!j.repos.length)tb.append(el('tr',{},el('td',{colspan:4,class:'mute'},'还没有仓库。填一个链接，系统会自动扫描文件并匹配到模型。')));
+  j.repos.forEach((r,i)=>{const rs=(st.repos||{})[r.id]||{};
+    const status=r.enabled===false?el('span',{class:'tag mute'},'已停用'):rs.error?el('span',{class:'tag bad',title:rs.error},'拉取失败'):rs.commit?el('span',{class:'tag ok'},`${rs.files} 个文件 · ${rs.commit}`):el('span',{class:'tag mute'},'等待同步');
+    tb.append(el('tr',{},
+      el('td',{},el('div',{class:'mono'},r.url),el('div',{class:'small mute'},(r.kind==='raw'?'单文件 · ':'')+(r.has_token?'已设置 Token · ':'')+'添加于 '+(r.added_at||''))),
+      el('td',{class:'small'},(r.branch||'默认分支')+' / '+(r.subpath||'根目录')),
+      el('td',{},status,rs.error?el('div',{class:'small',style:'color:var(--bad)'},rs.error):null,rs.pulled_at?el('div',{class:'small mute'},'拉取于 '+rs.pulled_at):null),
+      el('td',{},el('div',{class:'row'},
+        el('button',{onclick:()=>act('repos/move',{id:r.id,dir:'up'}),disabled:i===0?'':null},'↑'),
+        el('button',{onclick:()=>act('repos/move',{id:r.id,dir:'down'}),disabled:i===j.repos.length-1?'':null},'↓'),
+        el('button',{onclick:()=>act('repos/update',{id:r.id,enabled:r.enabled===false})},r.enabled===false?'启用':'停用'),
+        el('button',{onclick:()=>{const t=prompt('新的 Token（留空 = 删除 Token）：');if(t!==null)act('repos/update',{id:r.id,token:t})}},'Token'),
+        el('button',{class:'bad',onclick:()=>{if(confirm('删除这个仓库来源？\n'+r.url))act('repos/remove',{id:r.id},'已删除')}},'删除')))))})}
+$('#addRepo').onclick=async()=>{const url=$('#rUrl').value.trim();if(!url)return toast('请填写链接');
+  if(await act('repos/add',{url,branch:$('#rBranch').value,subpath:$('#rSub').value,token:$('#rTok').value},'已保存，后台同步中')){$('#rUrl').value=$('#rBranch').value=$('#rSub').value=$('#rTok').value=''}};
+function renderConflicts(st){const c=st.conflicts||[];$('#secConflicts').classList.toggle('hidden',!c.length);$('#conflictCount').textContent=c.length+' 个模型';
+  const box=$('#conflicts');box.innerHTML='';
+  for(const cf of c){const g=el('div',{class:'grid'});
+    for(const k of cf.candidates){g.append(el('div',{class:'cand'},
+      el('div',{class:'row'},el('b',{class:'mono',style:'flex:1'},k.label),k.score!=null?el('span',{class:'tag'},'分数 '+k.score):el('span',{class:'tag ok'},'本地')),
+      el('div',{class:'small mute'},k.reason||''),el('div',{class:'pre'},k.preview||'(空)'),
+      el('button',{class:'pri',onclick:()=>act('choose',{model:cf.model,key:k.key},'已保留，并记住此选择')},'保留这个')))}
+    box.append(el('div',{class:'conflict'},el('div',{class:'row',style:'margin-bottom:8px'},el('b',{class:'mono'},cf.model),cf.upstream?el('span',{class:'small mute'},'上游 '+cf.upstream):null,el('span',{class:'tag warn'},cf.why),el('span',{class:'small mute'},'当前暂用：'+(cf.previous?'上一次的提示词':'默认/无'))),g))}}
+function renderModels(st){const tb=$('#models');tb.innerHTML='';const f=$('#mFilter').value.toLowerCase(),only=$('#onlyPrompt').checked;
+  const rows=st.rows||[];$('#modelMeta').textContent=`（${(st.models||[]).length} 个模型，来自 ${st.model_source||'-'}，实时刷新 · 更新于 ${st.last_run||'-'}；注入 ${ (st.output_keys||[]).length } 个${(st.stored_only||[]).length?`；已下线模型的提示词保留 ${st.stored_only.length} 个`:''}）`;
+  for(const r of rows){if(f&&!r.model.toLowerCase().includes(f))continue;if(only&&!r.prompt)continue;
+    const [lab,cls]=SRC[r.source]||[r.source,'mute'];
+    const src=el('div',{},el('span',{class:'tag '+cls},lab),r.score!=null?el('span',{class:'tag',style:'margin-left:4px'},'分数 '+r.score):null);
+    const info=el('div',{class:'small mute'},r.key&&r.key!=='local:'?(r.key.split('::')[1]||''):'',r.reason?el('div',{},r.reason):null);
+    const cands=r.candidates&&r.candidates.length>1&&r.source!=='conflict'?el('div',{class:'small mute'},`${r.candidates.length} 个候选`):null;
+    tb.append(el('tr',{},
+      el('td',{},el('div',{class:'mono'},r.model),el('div',{class:'small mute'},[r.provider?(r.pointer?'快捷指针 · '+r.provider:r.provider):'',r.upstream&&r.upstream!==r.model?'→ '+r.upstream:''].filter(Boolean).join(' ')),(r.old_names||[]).length?el('div',{class:'small mute'},'兼容旧名：'+r.old_names.join(', ')):null),
+      el('td',{},src,info,cands,r.error?el('div',{class:'small',style:'color:var(--bad)'},r.error):null),
+      el('td',{},r.prompt?el('div',{class:'prev',title:r.prompt},r.prompt):el('span',{class:'mute small'},'（不注入）')),
+      el('td',{},el('button',{onclick:()=>openEdit(r)},'编辑'))))}}
+$('#mFilter').oninput=()=>S&&renderModels(S.status||{});$('#onlyPrompt').onchange=()=>S&&renderModels(S.status||{});
+function renderLists(st){const u=st.unmatched||[];$('#unmCount').textContent=u.length;$('#unmatched').innerHTML='';
+  for(const m of u)$('#unmatched').append(el('div',{},m));
+  $('#unusedCount').textContent=(st.unused_total||0)+(st.unused_total>(st.unused||[]).length?`（显示前 ${(st.unused||[]).length}）`:'');renderUnused()}
+function renderUnused(){const box=$('#unused');box.innerHTML='';const f=$('#uFilter').value.toLowerCase();let n=0;
+  for(const x of ((S&&S.status&&S.status.unused)||[])){if(f&&!x.label.toLowerCase().includes(f))continue;if(++n>400)break;
+    box.append(el('div',{class:'row',style:'border-bottom:1px solid var(--line);padding:3px 0'},el('span',{class:'mono',style:'flex:1'},x.label),
+      el('button',{class:'small',onclick:()=>{const m=prompt('把这个文件指定给哪个模型？（输入模型名）\n'+x.label);if(m)act('override',{model:m.trim(),type:'file',key:x.key},'已指定')}},'指定给模型'),
+      el('button',{class:'small',onclick:async()=>{const j=await api('file?key='+encodeURIComponent(x.key));alert(j.text||'(空)')}},'预览')))}}
+$('#uFilter').oninput=renderUnused;
+let cur=null;
+function openEdit(r){cur=r;$('#eModel').textContent=r.model;const ov=S.overrides[r.model];
+  $('#eInfo').textContent=`当前来源：${(SRC[r.source]||[r.source])[0]}${ov?' ｜ 已设置覆盖：'+ov.type:''}${S.local[r.model]!=null?' ｜ 有本地提示词':''}`;
+  $('#eText').value=(ov&&ov.type==='text')?ov.text:(S.local[r.model]!=null?S.local[r.model]:(r.source==='default'?'':r.prompt)||'');$('#eFile').value='';$('#editDlg').classList.remove('hidden')}
+function closeEdit(){$('#editDlg').classList.add('hidden');cur=null}
+$('#eClose').onclick=closeEdit;
+$('#eSaveLocal').onclick=async()=>{if(await act('local',{model:cur.model,text:$('#eText').value}))closeEdit()};
+$('#eSaveOverride').onclick=async()=>{if(await act('override',{model:cur.model,type:'text',text:$('#eText').value}))closeEdit()};
+$('#eDelLocal').onclick=async()=>{if(confirm('删除本地提示词？'))if(await act('local',{model:cur.model,text:''}))closeEdit()};
+$('#eSaveFile').onclick=async()=>{const k=fileByLabel[$('#eFile').value];if(!k)return toast('请从下拉列表中选择一个文件');if(await act('override',{model:cur.model,type:'file',key:k}))closeEdit()};
+$('#eNone').onclick=async()=>{if(await act('override',{model:cur.model,type:'none'}))closeEdit()};
+$('#eClear').onclick=async()=>{if(await act('override',{model:cur.model,type:'clear'}))closeEdit()};
+$('#saveDefault').onclick=()=>act('default',{text:$('#defaultPrompt').value});
+load().then(()=>{if(!S)showAuth(storedManagementKey()?'':'管理中心未保存密钥时，请输入 CPA 管理密钥')});
+setInterval(()=>{if(S&&!polling&&$('#editDlg').classList.contains('hidden')&&document.visibilityState==='visible')load()},15000);
+</script>
+</body>
+</html>

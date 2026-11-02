@@ -1,0 +1,7 @@
+dist/
+.cache/
+*.so
+*.dylib
+*.dll
+*.h
+prompt-admin-data/
