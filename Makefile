@@ -1,5 +1,5 @@
 PLUGIN_ID := prompt-admin
-VERSION ?= 0.1.0
+VERSION ?= 0.1.1
 DIST := dist
 LDFLAGS := -s -w -X cpa-plugin-prompt-admin/internal/runtime.Version=$(VERSION)
 

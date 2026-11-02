@@ -29,8 +29,8 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 .cand{border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:6px}
 .conflict{border:2px solid var(--warn);border-radius:10px;padding:12px;margin-bottom:12px;background:#fffbeb}
 .prev{max-height:60px;overflow:hidden;color:var(--mute);font-size:12px;white-space:pre-wrap;word-break:break-word}
-#auth{max-width:460px;margin:12vh auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px}
-#auth input{width:100%;margin:10px 0}
+#auth{max-width:520px;margin:12vh auto;background:#fff;border:1px solid var(--line);border-radius:12px;padding:24px}
+#auth .notice{color:var(--mute);font-size:13px;line-height:1.6}
 #toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:9}
 .hidden{display:none!important}
 .log{max-height:300px;overflow:auto;background:#0b1020;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:8px;border-radius:6px;white-space:pre-wrap}
@@ -40,10 +40,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 <body>
 <div id="auth" class="hidden">
   <h2 style="margin-top:0">模型提示词管理</h2>
-  <div class="mute small">使用 CPA 管理密钥登录。管理中心已记住密钥时会自动连接，不会再要一套单独的密码。</div>
-  <input id="pw" type="password" autocomplete="current-password" placeholder="CPA 管理密钥">
-  <button class="pri" id="loginBtn" style="width:100%">连接</button>
-  <div id="loginErr" style="color:var(--bad);margin-top:8px"></div>
+  <div class="notice" id="authNotice">请先在 CPA 管理中心登录后，从管理中心菜单打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。</div>
 </div>
 
 <div id="app" class="hidden">
@@ -54,7 +51,6 @@ th{font-size:12px;color:var(--mute);font-weight:600}
   <span class="meta" id="syncState"></span>
   <button class="pri" id="syncBtn">立即同步</button>
   <button id="refreshBtn">刷新</button>
-  <button id="logoutBtn">忘记本页密钥</button>
 </header>
 <main>
   <section id="secErr" class="hidden">
@@ -169,22 +165,22 @@ function storedManagementKey(){
   const session=safeSessionStorage(), local=safeLocalStorage();
   return firstText(readCPAStorageValue(session,'managementKey'),readCPAStorageValue(local,'managementKey'),readCPAAuthStoreKey(session),readCPAAuthStoreKey(local),readStorageText(session,SESSION_KEY));
 }
-function managementKey(){const typed=$('#pw').value.trim();if(typed){writeStorageText(safeSessionStorage(),SESSION_KEY,typed);return typed}return storedManagementKey()}
-function showAuth(msg){$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');$('#loginErr').textContent=msg||'';$('#pw').focus()}
+function managementKey(){return storedManagementKey()}
+const AUTH_NOTICE='请先在 CPA 管理中心登录后，从管理中心菜单打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。单独打开本资源地址无法进行编辑（这是设计如此）。';
+function showAuth(msg){$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');$('#authNotice').textContent=msg||AUTH_NOTICE}
+function clearSessionKeyCopy(){removeStorageValue(safeSessionStorage(),SESSION_KEY)}
 async function api(path,body){
   const key=managementKey();
-  if(!key){showAuth('请输入 CPA 管理密钥');throw new Error('未连接')}
-  const opt=body===undefined?{headers:{Authorization:'Bearer '+key,Accept:'application/json'}}:{method:'POST',headers:{Authorization:'Bearer '+key,Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify(body)};
+  if(!key){showAuth();throw new Error('未连接')}
+  const headers={Accept:'application/json'};
+  if(key)headers.Authorization='Bearer '+key;
+  const opt=body===undefined?{credentials:'same-origin',headers}:{method:'POST',credentials:'same-origin',headers:Object.assign({'Content-Type':'application/json'},headers),body:JSON.stringify(body)};
   const r=await fetch(API+'/'+path,opt);let j={};try{j=await r.json()}catch(e){}
-  if(r.status===401){removeStorageText();showAuth('管理密钥被拒绝');throw new Error('管理密钥被拒绝')}
+  if(r.status===401){clearSessionKeyCopy();showAuth();throw new Error('未授权')}
   if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
-  writeStorageText(safeSessionStorage(),SESSION_KEY,key);
+  if(key)writeStorageText(safeSessionStorage(),SESSION_KEY,key);
   return j
 }
-function removeStorageText(){removeStorageValue(safeSessionStorage(),SESSION_KEY);$('#pw').value=''}
-async function login(){$('#loginErr').textContent='';try{await load()}catch(e){$('#loginErr').textContent=e.message}}
-$('#loginBtn').onclick=login;$('#pw').onkeydown=e=>{if(e.key==='Enter')login()};
-$('#logoutBtn').onclick=()=>{removeStorageText();showAuth('已清除本页记住的管理密钥')};
 $('#refreshBtn').onclick=()=>load();
 $('#syncBtn').onclick=async()=>{try{const j=await api('sync',{});toast(j.msg||'已开始同步');startPoll()}catch(e){toast(e.message)}};
 async function act(path,body,msg){try{const j=await api(path,body);toast(j.msg||msg||'已保存');await load();if(j.msg&&j.msg.includes('同步'))startPoll();return true}catch(e){toast('失败：'+e.message,5000);return false}}
@@ -262,7 +258,7 @@ $('#eSaveFile').onclick=async()=>{const k=fileByLabel[$('#eFile').value];if(!k)r
 $('#eNone').onclick=async()=>{if(await act('override',{model:cur.model,type:'none'}))closeEdit()};
 $('#eClear').onclick=async()=>{if(await act('override',{model:cur.model,type:'clear'}))closeEdit()};
 $('#saveDefault').onclick=()=>act('default',{text:$('#defaultPrompt').value});
-load().then(()=>{if(!S)showAuth(storedManagementKey()?'':'管理中心未保存密钥时，请输入 CPA 管理密钥')});
+if(storedManagementKey()){load().then(()=>{if(!S)showAuth()})}else{showAuth()}
 setInterval(()=>{if(S&&!polling&&$('#editDlg').classList.contains('hidden')&&document.visibilityState==='visible')load()},15000);
 </script>
 </body>

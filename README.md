@@ -8,12 +8,12 @@ Plugin id: `prompt-admin`. The management page is Chinese.
 
 ## Install
 
-Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). v0.1.0 ships `linux_amd64`, `linux_arm64`, and `windows_amd64`.
+Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). v0.1.1 ships `linux_amd64`, `linux_arm64`, and `windows_amd64`.
 
 ### Option A: manual drop-in (.so)
 
 ```bash
-VER=0.1.0
+VER=0.1.1
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/prompt-admin_${VER}_linux_amd64.zip
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -43,7 +43,7 @@ To list it in a registry (your own, or the official `router-for-me/CLIProxyAPI-P
   "name": "Prompt Admin",
   "description": "Per-model system prompts with Git prompt-repo auto-matching and a Management Center page.",
   "author": "Tx13758627780",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "homepage": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "license": "MIT",
@@ -69,7 +69,7 @@ plugins:
       data_dir: prompt-admin-data
       cpa_url: http://127.0.0.1:8317
       # cpa_config: config.yaml
-      # api_key: ""          # optional bearer for GET /v1/models; never logged or returned
+      # api_key: ""          # optional advanced override for GET /v1/models only; NOT required
       # names_file: names.json
       # models: [gpt-4o]     # used only when /v1/models and cpa_config yield nothing
       watch_interval: 15s    # integer means seconds
@@ -81,15 +81,15 @@ plugins:
 
 ## Management page
 
-Open:
+After installing, open the CPA Management Center (sign in there once), then choose **模型提示词** in the menu. You can use the page immediately — there is no second password and no management-key paste form on this page.
+
+The page URL is:
 
 ```text
 /v0/resource/plugins/prompt-admin/index.html
 ```
 
-For a CPA listening on port 8317 that is `http://127.0.0.1:8317/v0/resource/plugins/prompt-admin/index.html`. The menu label is **模型提示词**.
-
-The page reads the CPA management key from the management center's own storage when that storage is on the same origin. If it cannot see a key, paste the CPA management key. There is no second password. Changes go to authenticated routes under `/v0/management/plugins/prompt-admin/`. The HTML resource itself is not management-authenticated; do not expose the resource port to untrusted networks if that matters for your deployment.
+For a CPA listening on port 8317 that is `http://127.0.0.1:8317/v0/resource/plugins/prompt-admin/index.html`. Prefer opening it from the Management Center menu rather than pasting that URL alone: outside the Management Center session the page cannot edit (by design). It reuses the management key already stored by the Management Center on the same origin (`localStorage` / `cli-proxy-auth` / `managementKey`) and sends `Authorization: Bearer <management key>` on management calls. Changes go to authenticated routes under `/v0/management/plugins/prompt-admin/`. The HTML resource itself is not management-authenticated; do not expose the resource port to untrusted networks if that matters for your deployment.
 
 | Action | Route |
 | --- | --- |
@@ -106,7 +106,7 @@ Send `Authorization: Bearer <management key>` on those routes.
 
 ### Add a repo and resolve a conflict
 
-1. Open the page and connect with the management key.
+1. Open the page from the Management Center menu 「模型提示词」 (after signing in there).
 2. Paste an `https` GitHub, GitLab, Codeberg, or raw file URL. `owner/repo` is accepted as GitHub. Optional branch, subdirectory, and a token for a private repo. Token is stored in `state.json` and is not returned to the browser.
 3. Choose **添加并同步**. The plugin shallow-clones (or downloads a raw file) under `data_dir/repos/` and scores every scanned file against the live model list.
 4. When one model has two or more different candidates, the page shows them side by side. Choose **保留这个** on the text to keep. Until you choose, the previous prompt stays in effect, or the default prompt when there is no previous one.
@@ -190,7 +190,7 @@ All under `data_dir` (default `prompt-admin-data`, created `0700`):
 
 Git is invoked with a cleaned environment. A repo token is passed as an HTTP extra header, not as a process argument, and it is not written to the management API. `git` must be on `PATH` for git repos. A single raw HTTPS file does not need git. `file://` repos work only when `allow_file_urls` is true.
 
-The model list comes from `GET {cpa_url}/v1/models` using `api_key` or the first `api-keys` entry under `access` in `cpa_config`. If that fails, alias names in `cpa_config` are used. If those are empty, `models` in this plugin's config is used. When every source is empty, `prompts.json` is left unchanged and the page shows an error.
+The model list prefers `GET {cpa_url}/v1/models` when a bearer is available: an optional `api_key` override, otherwise the first `api-keys` entry under `access` in `cpa_config`. `api_key` is **not required**. If `/v1/models` is unavailable, alias names in `cpa_config` are used. If those are empty, `models` in this plugin's config is used. When every source is empty, `prompts.json` is left unchanged and the page shows an error.
 
 ## Build
 
@@ -213,7 +213,7 @@ make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_
 
 Darwin cgo needs `zig` plus a MacOSX SDK, because the Go runtime links `CoreFoundation`, `Security`, and `libresolv`. `make release` downloads [MacOSX 14.5.sdk](https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz) into `.cache/` when `MACOSX_SDK` is unset. That SDK is Apple's; accept the Xcode license terms before using it. Point `MACOSX_SDK` at an existing SDK tree to skip the download.
 
-Version defaults to `0.1.0`. Override with `make release VERSION=0.1.1`.
+Version defaults to `0.1.1`. Override with `make release VERSION=0.1.2`.
 
 ## Behavior that is intentionally narrower than a standalone gateway
 
@@ -231,7 +231,7 @@ Version defaults to `0.1.0`. Override with `make release VERSION=0.1.1`.
 - **自动更新**：模型列表约每 15 秒刷新一次，仓库默认每小时拉取一次；修改提示词无需重启 CPA。
 - **安装方式一（手动）**：从 [Releases](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) 下载对应平台的 zip，校验 `checksums.txt` 后，把 `prompt-admin.so` 解压到 `plugins/linux/amd64/`，在 `config.yaml` 中加入上文的 `plugins` 配置块，重启 CPA。
 - **安装方式二（插件商店）**：在管理中心的插件商店中安装 Prompt Admin（需所用的商店 registry 已收录本插件）。
-- **管理页面**：`/v0/resource/plugins/prompt-admin/index.html`，例如 `http://your-host:8317/v0/resource/plugins/prompt-admin/index.html`，使用 CPA 管理密钥登录，没有单独密码。
+- **管理页面**：安装后打开 CPA 管理中心并登录，在菜单中进入「模型提示词」即可直接使用，无需再输入/配置管理密钥或插件密码。单独打开资源 URL（不经管理中心）无法编辑（设计如此）。页面地址：`/v0/resource/plugins/prompt-admin/index.html`。
 - **验证注入**：保存某模型的提示词后调用 `/v1/chat/completions`，响应头中出现 `X-Prompt-Admin: injected` 即表示已注入。
 
 ## License

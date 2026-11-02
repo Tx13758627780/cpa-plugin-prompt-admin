@@ -23,8 +23,18 @@ func TestPageAndDefaultPrompt(t *testing.T) {
 	}
 	t.Cleanup(eng.Close)
 	page := Handle(eng, http.MethodGet, "/v0/resource/plugins/prompt-admin/index.html", nil, nil)
-	if page.Status != http.StatusOK || !strings.Contains(string(page.Body), "模型提示词管理") {
+	body := string(page.Body)
+	if page.Status != http.StatusOK || !strings.Contains(body, "模型提示词管理") {
 		t.Fatalf("status %d", page.Status)
+	}
+	if strings.Contains(body, `placeholder="CPA 管理密钥"`) || strings.Contains(body, `id="pw"`) || strings.Contains(body, "loginBtn") || strings.Contains(body, "忘记本页密钥") {
+		t.Fatal("management page must not offer a key paste / login form")
+	}
+	if !strings.Contains(body, "从管理中心菜单打开") {
+		t.Fatal("expected Management Center notice")
+	}
+	if !strings.Contains(body, "same-origin") {
+		t.Fatal("expected same-origin credentials on management fetches")
 	}
 	saved := Handle(eng, http.MethodPost, "/plugins/prompt-admin/default", nil, []byte(`{"text":"fallback"}`))
 	if saved.Status != http.StatusOK {

@@ -29,7 +29,7 @@ const (
 )
 
 // Version is set by the main package from ldflags.
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 // Service owns one engine and the short-lived injection marks used to label responses.
 type Service struct {
@@ -409,7 +409,7 @@ func Metadata() pluginapi.Metadata {
 			{Name: "data_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Directory for prompts, git clones, backups, and sync logs. Default: prompt-admin-data under the CPA working directory."},
 			{Name: "cpa_url", Type: pluginapi.ConfigFieldTypeString, Description: "Base URL used to read GET /v1/models. Default: http://127.0.0.1:8317."},
 			{Name: "cpa_config", Type: pluginapi.ConfigFieldTypeString, Description: "Optional CPA config.yaml. The first access api-key and alias map are read from it. The key is not logged or returned."},
-			{Name: "api_key", Type: pluginapi.ConfigFieldTypeString, Description: "Optional bearer token for GET /v1/models. Overrides the key read from cpa_config. Never logged or returned."},
+			{Name: "api_key", Type: pluginapi.ConfigFieldTypeString, Description: "Optional advanced override for GET /v1/models only. Not required: the model list comes from cpa_config access.api-keys (or static models). Never logged or returned."},
 			{Name: "names_file", Type: pluginapi.ConfigFieldTypeString, Description: "Optional JSON file of hidden aliases (old name to current name). Without it, alias rewrite is off."},
 			{Name: "models", Type: pluginapi.ConfigFieldTypeArray, Description: "Static model ids used when /v1/models and cpa_config yield none."},
 			{Name: "watch_interval", Type: pluginapi.ConfigFieldTypeString, Description: "How often to re-read the model list. Default 15s. Integer means seconds."},

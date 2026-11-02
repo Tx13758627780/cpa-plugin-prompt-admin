@@ -1,5 +1,5 @@
 // Package panel serves the Chinese management page and its JSON actions.
-// The page is a CPA resource. Actions are management routes and require the CPA management key.
+// The page is a CPA resource opened from the Management Center. Actions are management routes that still require the host management Bearer token (sent from the Center session).
 package panel
 
 import (
