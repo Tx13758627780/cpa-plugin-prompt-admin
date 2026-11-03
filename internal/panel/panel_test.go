@@ -30,8 +30,13 @@ func TestPageAndDefaultPrompt(t *testing.T) {
 	if strings.Contains(body, `placeholder="CPA 管理密钥"`) || strings.Contains(body, `id="pw"`) || strings.Contains(body, "loginBtn") || strings.Contains(body, "忘记本页密钥") {
 		t.Fatal("management page must not offer a key paste / login form")
 	}
-	if !strings.Contains(body, "从管理中心菜单打开") {
-		t.Fatal("expected Management Center notice")
+	if !strings.Contains(body, "从管理中心菜单重新打开") || !strings.Contains(body, "记住密码") {
+		t.Fatal("expected Management Center notice with the 记住密码 hint")
+	}
+	for _, want := range []string{"enc::v2::", "enc::v1::", "cli-proxy-api-webui::secure-storage", "navigator.userAgent", "cli-proxy-auth"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in the Management Center storage decoder", want)
+		}
 	}
 	if !strings.Contains(body, "same-origin") {
 		t.Fatal("expected same-origin credentials on management fetches")

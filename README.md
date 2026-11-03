@@ -13,7 +13,7 @@ Release archives are published on the [Releases page](https://github.com/Tx13758
 ### Option A: manual drop-in (.so)
 
 ```bash
-VER=0.1.2
+VER=0.1.3
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/prompt-admin_${VER}_linux_amd64.zip
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -43,7 +43,7 @@ To list it in a registry (your own, or the official `router-for-me/CLIProxyAPI-P
   "name": "Prompt Admin",
   "description": "Per-model system prompts with Git prompt-repo auto-matching and a Management Center page.",
   "author": "Tx13758627780",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "repository": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "homepage": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "license": "MIT",
@@ -214,7 +214,7 @@ make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_
 
 Darwin cgo needs `zig` plus a MacOSX SDK, because the Go runtime links `CoreFoundation`, `Security`, and `libresolv`. `make release` downloads [MacOSX 14.5.sdk](https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz) into `.cache/` when `MACOSX_SDK` is unset. That SDK is Apple's; accept the Xcode license terms before using it. Point `MACOSX_SDK` at an existing SDK tree to skip the download.
 
-Version defaults to `0.1.2`. Override with `make release VERSION=0.1.3`.
+Version defaults to `0.1.3`. Override with `make release VERSION=0.1.4`.
 
 ## Behavior that is intentionally narrower than a standalone gateway
 
@@ -237,6 +237,7 @@ Version defaults to `0.1.2`. Override with `make release VERSION=0.1.3`.
 
 ## Changelog
 
+- **0.1.3**: the management page reads the current Management Center session again. It decodes both `enc::v2::` storage (key `cli-proxy-api-webui::secure-storage|<host>`) and legacy `enc::v1::` storage (key also includes the browser user agent), and takes the key from the `cli-proxy-auth` store. When no key is found, the notice says to tick 「记住密码」 when logging in to the Management Center and reopen 「模型提示词」.
 - **0.1.2**: adds macOS builds (`darwin_amd64`, `darwin_arm64`, `prompt-admin.dylib`) and a GitHub Actions release workflow that builds all five platform zips plus `checksums.txt` on tag push.
 - **0.1.1**: the management page uses the Management Center session; the key-paste login is gone.
 - **0.1.0**: first release.

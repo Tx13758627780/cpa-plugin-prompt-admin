@@ -40,7 +40,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 <body>
 <div id="auth" class="hidden">
   <h2 style="margin-top:0">模型提示词管理</h2>
-  <div class="notice" id="authNotice">请先在 CPA 管理中心登录后，从管理中心菜单打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。</div>
+  <div class="notice" id="authNotice">请先在 CPA 管理中心登录（登录时勾选「记住密码」），然后从管理中心菜单重新打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。</div>
 </div>
 
 <div id="app" class="hidden">
@@ -137,6 +137,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 const $=s=>document.querySelector(s);
 const API='/v0/management/plugins/prompt-admin';
 const CPA_STORAGE_PREFIX='enc::v1::';
+const CPA_STORAGE_PREFIX_V2='enc::v2::';
 const CPA_STORAGE_SALT='cli-proxy-api-webui::secure-storage';
 const SESSION_KEY='cpa_prompt_admin_key';
 let S=null, fileByLabel={}, polling=null;
@@ -149,24 +150,37 @@ function writeStorageText(storage,name,value){try{if(storage)storage.setItem(nam
 function removeStorageValue(storage,name){try{if(storage)storage.removeItem(name)}catch(_e){}}
 function firstText(...values){for(const value of values){if(typeof value==='string'&&value.trim())return value.trim()}return ''}
 function parseStoredValue(value){if(!value)return null;try{return JSON.parse(value)}catch(_e){return value}}
-function decodeCPAStorage(value){
-  if(!value||!value.startsWith(CPA_STORAGE_PREFIX))return value;
-  try{
-    const data=Uint8Array.from(atob(value.slice(CPA_STORAGE_PREFIX.length)),character=>character.charCodeAt(0));
-    const key=new TextEncoder().encode(CPA_STORAGE_SALT+'|'+window.location.host+'|'+navigator.userAgent);
-    const decoded=new Uint8Array(data.length);
-    for(let index=0;index<data.length;index++)decoded[index]=data[index]^key[index%key.length];
-    return new TextDecoder().decode(decoded);
-  }catch(_e){return ''}
+function cpaStorageKey(version){
+  // enc::v2:: (current Management Center): salt|host. enc::v1:: (legacy): salt|host|userAgent.
+  const parts=[CPA_STORAGE_SALT,window.location.host];
+  if(version==='v1')parts.push(navigator.userAgent);
+  return new TextEncoder().encode(parts.join('|'));
 }
-function readCPAStorageValue(storage,name){const raw=readStorageText(storage,name);if(!raw)return null;const decoded=decodeCPAStorage(raw);return parseStoredValue(decoded||raw)}
+function xorCPAStorage(data,key){const decoded=new Uint8Array(data.length);for(let index=0;index<data.length;index++)decoded[index]=data[index]^key[index%key.length];return new TextDecoder('utf-8',{fatal:true}).decode(decoded)}
+function decodeCPAStorage(value){
+  if(!value)return value;
+  let prefix='';
+  if(value.startsWith(CPA_STORAGE_PREFIX_V2))prefix=CPA_STORAGE_PREFIX_V2;
+  else if(value.startsWith(CPA_STORAGE_PREFIX))prefix=CPA_STORAGE_PREFIX;
+  else return value;
+  let data;
+  try{data=Uint8Array.from(atob(value.slice(prefix.length)),character=>character.charCodeAt(0))}catch(_e){return ''}
+  // Try the key that matches the prefix first, then the other one, and keep the first result that is valid JSON.
+  const order=prefix===CPA_STORAGE_PREFIX_V2?['v2','v1']:['v1','v2'];
+  for(const version of order){
+    try{const text=xorCPAStorage(data,cpaStorageKey(version));JSON.parse(text);return text}catch(_e){}
+  }
+  return '';
+}
+function isCPAEncrypted(value){return typeof value==='string'&&(value.startsWith(CPA_STORAGE_PREFIX_V2)||value.startsWith(CPA_STORAGE_PREFIX))}
+function readCPAStorageValue(storage,name){const raw=readStorageText(storage,name);if(!raw)return null;const decoded=decodeCPAStorage(raw);if(!decoded&&isCPAEncrypted(raw))return null;return parseStoredValue(decoded||raw)}
 function readCPAAuthStoreKey(storage){const auth=readCPAStorageValue(storage,'cli-proxy-auth');if(!auth||typeof auth!=='object')return '';return firstText(auth.state&&auth.state.managementKey,auth.managementKey)}
 function storedManagementKey(){
   const session=safeSessionStorage(), local=safeLocalStorage();
   return firstText(readCPAStorageValue(session,'managementKey'),readCPAStorageValue(local,'managementKey'),readCPAAuthStoreKey(session),readCPAAuthStoreKey(local),readStorageText(session,SESSION_KEY));
 }
 function managementKey(){return storedManagementKey()}
-const AUTH_NOTICE='请先在 CPA 管理中心登录后，从管理中心菜单打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。单独打开本资源地址无法进行编辑（这是设计如此）。';
+const AUTH_NOTICE='未读取到管理中心保存的管理密钥。请在 CPA 管理中心登录时勾选「记住密码」，登录后从管理中心菜单重新打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。单独打开本资源地址无法进行编辑（这是设计如此）。';
 function showAuth(msg){$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');$('#authNotice').textContent=msg||AUTH_NOTICE}
 function clearSessionKeyCopy(){removeStorageValue(safeSessionStorage(),SESSION_KEY)}
 async function api(path,body){

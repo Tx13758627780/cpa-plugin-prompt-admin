@@ -29,7 +29,7 @@ const (
 )
 
 // Version is set by the main package from ldflags.
-var Version = "0.1.2"
+var Version = "0.1.3"
 
 // Service owns one engine and the short-lived injection marks used to label responses.
 type Service struct {
