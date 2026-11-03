@@ -26,7 +26,7 @@ jobs:
       matrix:
         include:
           - { goos: linux, goarch: amd64, runner: ubuntu-22.04, cc: gcc, lib: prompt-admin.so }
-          - { goos: linux, goarch: arm64, runner: ubuntu-22.04, cc: aarch64-linux-gnu-gcc, lib: prompt-admin.so }
+          - { goos: linux, goarch: arm64, runner: ubuntu-22.04-arm, cc: gcc, lib: prompt-admin.so }
           - { goos: windows, goarch: amd64, runner: ubuntu-22.04, cc: x86_64-w64-mingw32-gcc, lib: prompt-admin.dll }
           - { goos: darwin, goarch: arm64, runner: macos-14, cc: "clang -arch arm64", lib: prompt-admin.dylib }
           - { goos: darwin, goarch: amd64, runner: macos-14, cc: "clang -arch x86_64", lib: prompt-admin.dylib }
@@ -42,7 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64 zip
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64 zip
       - name: Resolve version
         shell: bash
         run: |

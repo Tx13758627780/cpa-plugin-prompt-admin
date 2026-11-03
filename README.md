@@ -8,7 +8,7 @@ Plugin id: `prompt-admin`. The management page is Chinese.
 
 ## Install
 
-Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). Since v0.1.2 every release ships all five targets: `darwin_amd64`, `darwin_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`. They are built by the [release workflow](.github/workflows/release.yml) on GitHub Actions when a `v*` tag is pushed (macOS on a native `macos-14` runner).
+Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). Since v0.1.2 every release ships all five targets: `darwin_amd64`, `darwin_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`. They are built by the [release workflow](.github/workflows/release.yml) on GitHub Actions when a `v*` tag is pushed (macOS on `macos-14`, Linux arm64 on a native `ubuntu-22.04-arm` runner).
 
 ### Option A: manual drop-in (.so)
 
