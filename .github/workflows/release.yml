@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make fmt-check
+      - run: make test
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64, runner: ubuntu-22.04, cc: gcc, lib: prompt-admin.so }
+          - { goos: linux, goarch: arm64, runner: ubuntu-22.04, cc: aarch64-linux-gnu-gcc, lib: prompt-admin.so }
+          - { goos: windows, goarch: amd64, runner: ubuntu-22.04, cc: x86_64-w64-mingw32-gcc, lib: prompt-admin.dll }
+          - { goos: darwin, goarch: arm64, runner: macos-14, cc: "clang -arch arm64", lib: prompt-admin.dylib }
+          - { goos: darwin, goarch: amd64, runner: macos-14, cc: "clang -arch x86_64", lib: prompt-admin.dylib }
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install cross compilers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64 zip
+      - name: Resolve version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=$(sed -n 's/^VERSION ?= //p' Makefile)" >> "$GITHUB_ENV"
+          fi
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        shell: bash
+        run: |
+          make release-clean VERSION="$VERSION"
+          make build-target VERSION="$VERSION" GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC="${{ matrix.cc }}" LIB=${{ matrix.lib }}
+          file dist/release/obj/${{ matrix.lib }}
+          unzip -l dist/release/prompt-admin_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prompt-admin_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/release/prompt-admin_*_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd out
+          ls -l
+          test "$(ls *.zip | wc -l)" -eq 5
+          sha256sum *.zip > checksums.txt
+          cat checksums.txt
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cd out
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" *.zip checksums.txt --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" *.zip checksums.txt --title "$GITHUB_REF_NAME" --generate-notes --latest
+          fi

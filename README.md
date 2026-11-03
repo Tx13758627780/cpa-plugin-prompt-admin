@@ -8,12 +8,12 @@ Plugin id: `prompt-admin`. The management page is Chinese.
 
 ## Install
 
-Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). v0.1.1 ships `linux_amd64`, `linux_arm64`, and `windows_amd64`.
+Release archives are published on the [Releases page](https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases) in the CPA Plugin Store layout: `prompt-admin_<version>_<goos>_<goarch>.zip` (only the library at the zip root) plus `checksums.txt` (`sha256sum` output). Since v0.1.2 every release ships all five targets: `darwin_amd64`, `darwin_arm64`, `linux_amd64`, `linux_arm64`, and `windows_amd64`. They are built by the [release workflow](.github/workflows/release.yml) on GitHub Actions when a `v*` tag is pushed (macOS on a native `macos-14` runner).
 
 ### Option A: manual drop-in (.so)
 
 ```bash
-VER=0.1.1
+VER=0.1.2
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/prompt-admin_${VER}_linux_amd64.zip
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -43,7 +43,7 @@ To list it in a registry (your own, or the official `router-for-me/CLIProxyAPI-P
   "name": "Prompt Admin",
   "description": "Per-model system prompts with Git prompt-repo auto-matching and a Management Center page.",
   "author": "Tx13758627780",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "homepage": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "license": "MIT",
@@ -200,6 +200,7 @@ Requires Go 1.26, a C compiler, and cgo.
 make test
 make build    # dist/prompt-admin.so for linux/amd64, exports cliproxy_plugin_init
 make release  # store zips + dist/checksums.txt (needs zig + MacOSX SDK for darwin)
+# Official releases are built by .github/workflows/release.yml on tag push.
 make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_WINDOWS_AMD64="zig cc -target x86_64-windows-gnu"
 ```
 
@@ -213,7 +214,7 @@ make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_
 
 Darwin cgo needs `zig` plus a MacOSX SDK, because the Go runtime links `CoreFoundation`, `Security`, and `libresolv`. `make release` downloads [MacOSX 14.5.sdk](https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz) into `.cache/` when `MACOSX_SDK` is unset. That SDK is Apple's; accept the Xcode license terms before using it. Point `MACOSX_SDK` at an existing SDK tree to skip the download.
 
-Version defaults to `0.1.1`. Override with `make release VERSION=0.1.2`.
+Version defaults to `0.1.2`. Override with `make release VERSION=0.1.3`.
 
 ## Behavior that is intentionally narrower than a standalone gateway
 
@@ -233,6 +234,12 @@ Version defaults to `0.1.1`. Override with `make release VERSION=0.1.2`.
 - **安装方式二（插件商店）**：在管理中心的插件商店中安装 Prompt Admin（需所用的商店 registry 已收录本插件）。
 - **管理页面**：安装后打开 CPA 管理中心并登录，在菜单中进入「模型提示词」即可直接使用，无需再输入/配置管理密钥或插件密码。单独打开资源 URL（不经管理中心）无法编辑（设计如此）。页面地址：`/v0/resource/plugins/prompt-admin/index.html`。
 - **验证注入**：保存某模型的提示词后调用 `/v1/chat/completions`，响应头中出现 `X-Prompt-Admin: injected` 即表示已注入。
+
+## Changelog
+
+- **0.1.2**: adds macOS builds (`darwin_amd64`, `darwin_arm64`, `prompt-admin.dylib`) and a GitHub Actions release workflow that builds all five platform zips plus `checksums.txt` on tag push.
+- **0.1.1**: the management page uses the Management Center session; the key-paste login is gone.
+- **0.1.0**: first release.
 
 ## License
 
