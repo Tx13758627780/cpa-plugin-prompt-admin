@@ -19,7 +19,8 @@ Confirmed code defects:
 3. The default URL fixed the listener at `http://127.0.0.1:8317`. Loopback is correct for this in-process plugin in the standard Docker image, but custom ports/TLS were not inferred. Appending `/v1/models` also duplicated `/v1` for bases already ending in that path.
 4. Browser `API` was fixed to `/v0/management/...`, losing deployment prefixes such as `/cpa`. Proxy headers and CORS cannot be inspected on the reported server without its deployment access; the repository defect is the lost prefix. The implementation does not require cross-origin browser requests.
 5. Backend non-2xx and JSON errors were logged, then replaced by a generic empty-model error. A successful `{}` response silently parsed as an empty list. Browser JSON exceptions and `load()` failures were swallowed; the initial failure could become an authentication notice.
-6. The old Refresh button only reloaded state; there was no persistent manual-model registration.
+6. The release matrix used `macos-14`, which GitHub retired on November 2, 2026. The first validation run confirmed both macOS jobs were cancelled before any steps ran. The matrix now uses `macos-15` for both Darwin targets (Clang selects the output architecture). See [GitHub retirement announcement](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/).
+7. The old Refresh button only reloaded state; there was no persistent manual-model registration.
 
 ## API contract checked against upstream
 
@@ -40,7 +41,7 @@ The fix reads client keys server-side from the host configuration, avoiding a br
 - Accept OpenAI `data`, legacy `models`, or bare model arrays; trim, deduplicate and sort names. Report HTTP status, JSON errors, invalid schemas, empty catalogs, network/TLS failures and unreadable config. Selected client keys are redacted from diagnostics.
 - Preserve proxy prefixes for same-origin browser requests. Show persistent request errors and offer Retry, explicit model refresh, and manual names with add/remove controls.
 - Persist manual models across restarts; allow prompt edits/injection during discovery failure. Keep existing prompt entries during outages and resume normal pruning when discovery recovers.
-- Test both Go code and the actual embedded JavaScript using Node's built-in test runner. Run the release workflow for main pushes and PRs as well as tags; publishing remains tag-only.
+- Test both Go code and the actual embedded JavaScript using Node's built-in test runner. Run the release workflow for main pushes and PRs as well as tags; publishing remains tag-only. Replace retired `macos-14` runners with `macos-15`.
 
 ## Validation
 
