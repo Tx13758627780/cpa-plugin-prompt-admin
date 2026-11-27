@@ -34,7 +34,8 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 #toast{position:fixed;right:16px;bottom:16px;background:#111827;color:#fff;padding:10px 14px;border-radius:8px;display:none;max-width:420px;z-index:9}
 .hidden{display:none!important}
 .log{max-height:300px;overflow:auto;background:#0b1020;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;font-size:12px;padding:8px;border-radius:6px;white-space:pre-wrap}
-@media (max-width:720px){header{align-items:flex-start}table{display:block;overflow-x:auto}}
+.table-scroll{overflow-x:auto;max-width:100%}.repo-table{min-width:760px}.repo-table th{white-space:nowrap}
+@media (max-width:720px){header{align-items:flex-start}.repo-table{display:table}table{display:block;overflow-x:auto}}
 </style>
 </head>
 <body>
@@ -66,7 +67,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 
   <section>
     <h2>仓库来源 <span class="mute small">（顺序仅用于显示；可填多个）</span></h2>
-    <table><thead><tr><th style="width:36%">链接</th><th>分支 / 子目录</th><th>状态</th><th style="width:320px">操作</th></tr></thead><tbody id="repos"></tbody></table>
+    <div class="table-scroll"><table class="repo-table"><thead><tr><th style="width:36%">链接</th><th>分支 / 子目录</th><th>状态</th><th style="width:320px">操作</th></tr></thead><tbody id="repos"></tbody></table></div>
     <div class="row" style="margin-top:10px">
       <input id="rUrl" style="flex:3;min-width:260px" placeholder="GitHub / GitLab / Codeberg 仓库链接，或 raw 文件链接，或 owner/repo">
       <input id="rBranch" style="flex:1;min-width:90px" placeholder="分支（可选）">
@@ -74,7 +75,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
       <input id="rTok" style="flex:1;min-width:120px" type="password" autocomplete="off" placeholder="Token（私有库可选）">
       <button class="pri" id="addRepo">添加并同步</button>
     </div>
-    <div class="mute small" style="margin-top:6px">支持 https 链接（含 /tree/分支/子目录 形式）。扫描 .md .txt .json .yaml 文件（跳过 README / LICENSE 等）。Token 只存在服务器状态文件里，接口不会把它送回浏览器。</div>
+    <div class="mute small" style="margin-top:6px">支持 https 链接（含 /tree/分支/子目录 形式）。扫描 .md .txt .json .yaml 文件（跳过 README / LICENSE 等）。无 Git 的容器会自动下载 GitHub / GitLab.com / Codeberg 仓库归档。Token 只存在服务器状态文件里，接口不会把它送回浏览器。</div>
   </section>
 
   <section>
@@ -201,9 +202,9 @@ async function api(path,body){
   const controller=new AbortController();opt.signal=controller.signal;
   const timer=setTimeout(()=>controller.abort(),30000);
   try{
-    let r;try{r=await fetch(API+'/'+path,opt)}catch(e){throw new Error(e.name==='AbortError'?'请求超时（30 秒）；请检查 CPA 和代理连接':'网络请求失败；请检查反向代理路径、同源访问和 CORS：'+e.message)}
+    let r;try{r=await fetch(API+'/'+path+(path.includes('?')?'&':'?')+'wire=base64-json-v1',opt)}catch(e){throw new Error(e.name==='AbortError'?'请求超时（30 秒）；请检查 CPA 和代理连接':'网络请求失败；请检查反向代理路径、同源访问和 CORS：'+e.message)}
     const text=await r.text();let j;
-    try{j=JSON.parse(text)}catch(_e){throw new Error('HTTP '+r.status+'：响应不是 JSON，请检查反向代理或 Cloudflare Access 是否返回登录页')}
+    try{j=JSON.parse(text);if(j&&j.prompt_admin_wire==='base64-json-v1'){if(typeof j.payload!=='string')throw new Error('invalid wire payload');j=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(j.payload),c=>c.charCodeAt(0))))}}catch(_e){throw new Error('HTTP '+r.status+'：响应不是 JSON，请检查反向代理或 Cloudflare Access 是否返回登录页')}
     if(r.status===401){clearSessionKeyCopy();showAuth('HTTP 401：Management Key 无效或已过期。'+AUTH_NOTICE)}
     if(!r.ok){const msg=j&&(typeof j.error==='string'?j.error:(j.error&&j.error.message)||j.message)||r.statusText;throw new Error('HTTP '+r.status+'：'+msg)}
     if(!j||typeof j!=='object'||Array.isArray(j))throw new Error('HTTP '+r.status+'：插件返回了无法识别的 JSON');

@@ -83,18 +83,28 @@ func (e *Engine) pullRepo(ctx context.Context, repo Repo) (string, error) {
 		sum := sha1.Sum(body)
 		return hex.EncodeToString(sum[:])[:8], nil
 	}
+	if _, err := exec.LookPath("git"); err != nil {
+		return e.pullRepoArchive(ctx, repo)
+	}
 	env := e.gitEnv(repo.URL, repo.Token)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		_ = os.RemoveAll(dir)
 		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 			return "", err
 		}
+		stage, err := os.MkdirTemp(filepath.Dir(dir), ".clone-"+repo.ID+"-*")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(stage)
 		args := []string{"clone", "--depth", "1", "--single-branch", "--no-tags"}
 		if repo.Branch != "" {
 			args = append(args, "--branch", repo.Branch)
 		}
-		args = append(args, "--", repo.URL, dir)
+		args = append(args, "--", repo.URL, stage)
 		if err := runGit(ctx, args, env, ""); err != nil {
+			return "", err
+		}
+		if err := replaceRepoSnapshot(dir, stage); err != nil {
 			return "", err
 		}
 	} else {

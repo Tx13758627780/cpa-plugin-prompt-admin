@@ -27,7 +27,7 @@ const state=()=>({repos:[],sync:{running:false},status:{models:[],rows:[],model_
 test('same-origin plugin requests retain proxy prefixes and management authentication',async()=>{
  for(const path of ['/v0/resource/plugins/prompt-admin/index.html','/cpa/v0/resource/plugins/prompt-admin/index.html','/cpa/v8/resource/plugins/prompt-admin/index.html']){
   const f=fixture(path);const prefix=path.startsWith('/cpa/')?'/cpa':'';
-  f.context.fetch=async(url,opt)=>{assert.equal(url,prefix+'/v0/management/plugins/prompt-admin/state');assert.equal(opt.credentials,'same-origin');assert.equal(opt.headers.Authorization,'Bearer management-secret');return response(200,state())};
+  f.context.fetch=async(url,opt)=>{assert.equal(url,prefix+'/v0/management/plugins/prompt-admin/state?wire=base64-json-v1');assert.equal(opt.credentials,'same-origin');assert.equal(opt.headers.Authorization,'Bearer management-secret');return response(200,state())};
   await f.run('load()');
   assert.equal(f.get('#app').classList.contains('hidden'),false);
   assert.match(f.get('#statusErr').textContent,/HTTP 401/);
@@ -55,11 +55,11 @@ test('refresh requests recomputation and manual models persist through the manag
  const f=fixture();const calls=[];
  f.context.fetch=async(url,opt)=>{calls.push([url,opt.body&&JSON.parse(opt.body)]);return response(200,state())};
  await f.get('#refreshModels').onclick();
- assert.equal(calls[0][0],'/v0/management/plugins/prompt-admin/models/refresh');
+ assert.equal(calls[0][0],'/v0/management/plugins/prompt-admin/models/refresh?wire=base64-json-v1');
  assert.equal(f.get('#refreshModels').disabled,false);
  f.get('#manualModel').value=' custom-model ';
  await f.get('#addManualModel').onclick();
- assert.deepEqual(calls[1],['/v0/management/plugins/prompt-admin/models/manual',{model:'custom-model'}]);
+ assert.deepEqual(calls[1],['/v0/management/plugins/prompt-admin/models/manual?wire=base64-json-v1',{model:'custom-model'}]);
  assert.equal(f.get('#manualModel').value,'');
  assert.match(f.get('#models').children[0].children[0].children[0].textContent,/未加载到模型/);
 });
@@ -69,4 +69,25 @@ test('401, 404 and non-JSON action failures do not become empty objects',async()
   const f=fixture();f.context.fetch=async()=>response(status,body);
   await assert.rejects(f.run("api('state')"),new RegExp('HTTP '+status));
  }
+});
+
+test('schema-1-safe wire preserves UTF-8 prompts, literal entities and error quotes',async()=>{
+ const f=fixture();const j=state();
+ const text='中文 "quoted" & <tag> literal &#34; &amp;';
+ j.default_prompt=text;j.status.model_error='exec: "git": executable file not found in $PATH';
+ j.local={'model&special':text};
+ f.context.fetch=async()=>response(200,{prompt_admin_wire:'base64-json-v1',payload:Buffer.from(JSON.stringify(j),'utf8').toString('base64')});
+ const result=await f.run("api('state')");
+ assert.equal(result.local['model&special'],text);
+ await f.run('load()');
+ assert.equal(f.get('#defaultPrompt').value,text);
+ assert.equal(f.get('#statusErr').textContent,j.status.model_error);
+});
+
+test('malformed wire payloads report an error and file queries retain both parameters',async()=>{
+ const f=fixture();
+ f.context.fetch=async()=>response(200,{prompt_admin_wire:'base64-json-v1',payload:'!invalid'});
+ await assert.rejects(f.run("api('state')"),/HTTP 200.*不是 JSON/);
+ f.context.fetch=async(url)=>{assert.equal(url,'/v0/management/plugins/prompt-admin/file?key=repo%3A%3Afile.md&wire=base64-json-v1');return response(200,{text:'ok'})};
+ assert.equal((await f.run("api('file?key=repo%3A%3Afile.md')")).text,'ok');
 });

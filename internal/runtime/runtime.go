@@ -4,7 +4,9 @@ package runtime
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"sync"
@@ -29,7 +31,7 @@ const (
 )
 
 // Version is set by the main package from ldflags.
-var Version = "0.1.4"
+var Version = "0.1.5"
 
 // Service owns one engine and the short-lived injection marks used to label responses.
 type Service struct {
@@ -178,6 +180,12 @@ func (s *Service) HandleManagement(req pluginapi.ManagementRequest) pluginapi.Ma
 	eng, _ := s.currentEngine()
 	path, query := splitQuery(req.Path, req.Query)
 	result := panel.Handle(eng, req.Method, path, query, req.Body)
+	// Schema-1 hosts HTML-escape every JSON string, corrupting prompt text and
+	// even map keys. Opt-in wire encoding preserves bytes without raising the
+	// minimum host schema or guessing which literal entities to unescape.
+	if first := query["wire"]; len(first) > 0 && first[0] == "base64-json-v1" && strings.HasPrefix(result.Header.Get("Content-Type"), "application/json") {
+		result.Body, _ = json.Marshal(map[string]string{"prompt_admin_wire": "base64-json-v1", "payload": base64.StdEncoding.EncodeToString(result.Body)})
+	}
 	status := result.Status
 	if status == 0 {
 		status = http.StatusOK

@@ -1,6 +1,10 @@
 package runtime
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"html"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -181,5 +185,55 @@ func TestRegistrationShape(t *testing.T) {
 	}
 	if Metadata().Version == "" || Metadata().GitHubRepository == "" {
 		t.Fatalf("metadata = %+v", Metadata())
+	}
+}
+
+func TestManagementWirePreservesTextOnSchema1Hosts(t *testing.T) {
+	eng := testEngine(t)
+	svc := New()
+	svc.Use(eng, true)
+	text := `中文 "quoted" & <tag> literal &#34; &amp;`
+	if err := eng.SetDefault(text); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.SetLocal("model&special", text); err != nil {
+		t.Fatal(err)
+	}
+	response := svc.HandleManagement(pluginapi.ManagementRequest{Method: http.MethodGet, Path: "/plugins/prompt-admin/state?wire=base64-json-v1"})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", response.StatusCode)
+	}
+	var envelope map[string]string
+	if err := json.Unmarshal(response.Body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope["prompt_admin_wire"] != "base64-json-v1" {
+		t.Fatalf("wire %s", response.Body)
+	}
+	// The host sanitizes JSON string keys and values. Every wire string must
+	// remain unchanged by that operation; no entity decoding is needed in the UI.
+	for key, value := range envelope {
+		if html.EscapeString(key) != key || html.EscapeString(value) != value {
+			t.Fatal("wire is not schema-1 safe")
+		}
+	}
+	raw, err := base64.StdEncoding.DecodeString(envelope["payload"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state engine.Snapshot
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.DefaultPrompt != text || state.Local["model&special"] != text {
+		t.Fatalf("text was changed: %+v", state)
+	}
+	plain := svc.HandleManagement(pluginapi.ManagementRequest{Method: http.MethodGet, Path: "/plugins/prompt-admin/state"})
+	if !bytes.Contains(plain.Body, []byte(`"default_prompt"`)) {
+		t.Fatal("plain JSON clients changed")
+	}
+	page := svc.HandleManagement(pluginapi.ManagementRequest{Method: http.MethodGet, Path: "/v0/resource/plugins/prompt-admin/index.html?wire=base64-json-v1"})
+	if len(page.Body) == 0 || page.Body[0] != '<' {
+		t.Fatal("HTML resource was wire-encoded")
 	}
 }

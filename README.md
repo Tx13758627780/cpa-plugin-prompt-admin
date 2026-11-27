@@ -13,7 +13,7 @@ Release archives are published on the [Releases page](https://github.com/Tx13758
 ### Option A: manual drop-in (.so)
 
 ```bash
-VER=0.1.4
+VER=0.1.5
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/prompt-admin_${VER}_linux_amd64.zip
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -43,7 +43,7 @@ To list it in a registry (your own, or the official `router-for-me/CLIProxyAPI-P
   "name": "Prompt Admin",
   "description": "Per-model system prompts with Git prompt-repo auto-matching and a Management Center page.",
   "author": "Tx13758627780",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "repository": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "homepage": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "license": "MIT",
@@ -89,7 +89,7 @@ The page URL is:
 /v0/resource/plugins/prompt-admin/index.html
 ```
 
-For a CPA listening on port 8317 that is `http://127.0.0.1:8317/v0/resource/plugins/prompt-admin/index.html`. Prefer opening it from the Management Center menu rather than pasting that URL alone: outside the Management Center session the page cannot edit (by design). It reuses the management key already stored by the Management Center on the same origin (`localStorage` / `cli-proxy-auth` / `managementKey`) and sends `Authorization: Bearer <management key>` on management calls. Changes go to authenticated routes under `/v0/management/plugins/prompt-admin/`. The HTML resource itself is not management-authenticated; do not expose the resource port to untrusted networks if that matters for your deployment.
+For a CPA listening on port 8317 that is `http://127.0.0.1:8317/v0/resource/plugins/prompt-admin/index.html`. Prefer opening it from the Management Center menu rather than pasting that URL alone: outside the Management Center session the page cannot edit (by design). It reuses the management key already stored by the Management Center on the same origin (`localStorage` / `cli-proxy-auth` / `managementKey`) and sends `Authorization: Bearer <management key>` on management calls. Changes go to authenticated routes under `/v0/management/plugins/prompt-admin/`. The embedded page adds `wire=base64-json-v1` on its JSON calls so schema-1 hosts cannot HTML-escape prompt strings or JSON keys. This opt-in UTF-8/base64 envelope preserves literal entities as data; ordinary JSON calls remain unchanged. The HTML resource itself is not management-authenticated; do not expose the resource port to untrusted networks if that matters for your deployment.
 
 | Action | Route |
 | --- | --- |
@@ -190,7 +190,7 @@ All under `data_dir` (default `prompt-admin-data`, created `0700`):
 | `sync.log` | Sync log, rotated around 1 MB, timestamps in UTC+8. |
 | `.gitconfig-empty` | Empty git config so clones do not read the operator's git config. |
 
-Git is invoked with a cleaned environment. A repo token is passed as an HTTP extra header, not as a process argument, and it is not written to the management API. `git` must be on `PATH` for git repos. A single raw HTTPS file does not need git. `file://` repos work only when `allow_file_urls` is true.
+Git is invoked with a cleaned environment. A repo token is passed as an HTTP extra header, not as a process argument, and it is not written to the management API. When `git` is available on `PATH`, git repos use shallow clone/fetch. When it is absent (for example in the official minimal Docker runtime), GitHub, GitLab.com, and Codeberg repos use HTTPS ZIP archives automatically, with default/explicit branches, subdirectories and private tokens. Public GitHub archives do not consume REST API quota. Other forge hosts still require `git` or a raw-file URL. Archive downloads are limited to 64 MiB and extracted prompts to 64 MiB; the existing file-count and 256 KiB-per-file limits apply. Failed downloads, invalid archives, unsafe paths and missing/empty subdirectories keep the old cache. A `zip:<digest>` revision identifies archive snapshots. A single raw HTTPS file does not need git. `file://` repos work only when `allow_file_urls` is true.
 
 The model list uses `GET /v1/models` with a **client API key**, separate from the Management Key used by the browser. The optional plugin `api_key` overrides the first client key from `access.api-keys` (v8) or top-level `api-keys` (legacy). YAML is parsed structurally, including inline lists, quoted keys and v8 provider groups; upstream provider keys and `management.secret-key` / `remote-management.secret-key` are never used as client keys. If no key exists, a request without Authorization is still attempted for hosts with client authentication disabled.
 
@@ -224,7 +224,7 @@ make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_
 
 Darwin cgo needs `zig` plus a MacOSX SDK, because the Go runtime links `CoreFoundation`, `Security`, and `libresolv`. `make release` downloads [MacOSX 14.5.sdk](https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz) into `.cache/` when `MACOSX_SDK` is unset. That SDK is Apple's; accept the Xcode license terms before using it. Point `MACOSX_SDK` at an existing SDK tree to skip the download.
 
-Version defaults to `0.1.4`. See [v0.1.4 investigation and release steps](RELEASE_v0.1.4.md).
+Version defaults to `0.1.5`. See [v0.1.5 investigation and release steps](RELEASE_v0.1.5.md). The [v0.1.4 investigation](RELEASE_v0.1.4.md) documents the earlier model-list repair.
 
 ## Behavior that is intentionally narrower than a standalone gateway
 
@@ -246,6 +246,8 @@ Version defaults to `0.1.4`. See [v0.1.4 investigation and release steps](RELEAS
 - **验证注入**：保存某模型的提示词后调用 `/v1/chat/completions`，响应头中出现 `X-Prompt-Admin: injected` 即表示已注入。
 
 ## Changelog
+
+- **0.1.5**: fixes prompt-repository sync in containers without Git using validated HTTPS archives; preserves caches on failed updates; prevents schema-1 hosts from corrupting UI prompt text and errors with HTML entities; makes the repository table scroll on narrow screens. Adds missing-Git end-to-end, archive integrity/credential/path, and exact-text transport regression coverage.
 
 - **0.1.4**: fixes fresh Docker model discovery with automatic host config detection, structural v8/legacy YAML parsing and listener inference; preserves proxy prefixes; reports HTTP/JSON/empty-list failures; adds explicit refresh and persistent manual models, outage prompt retention, Go/JavaScript regression tests and CI on main/PRs.
 
