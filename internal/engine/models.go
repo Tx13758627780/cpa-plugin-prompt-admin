@@ -4,19 +4,26 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"cpa-plugin-prompt-admin/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 type modelSnap struct {
 	IDs      []string
 	Upstream map[string]string
 	Source   string
+	Error    string
 }
 
 type namesDoc struct {
@@ -28,6 +35,7 @@ type namesDoc struct {
 type signature struct {
 	Hash        string `json:"hash"`
 	Source      string `json:"source"`
+	Error       string `json:"error,omitempty"`
 	ConfigMtime int64  `json:"config_mtime"`
 	NamesMtime  int64  `json:"names_mtime"`
 }
@@ -36,115 +44,267 @@ func (e *Engine) fetchModels() modelSnap {
 	if e.fetch != nil {
 		return e.fetch()
 	}
-	key, upstream := readCPAConfig(e.cfg.CPAConfig)
+	host, configErr := readCPAConfig(e.cfg.CPAConfig)
+	key := host.Key
 	if strings.TrimSpace(e.cfg.APIKey) != "" {
 		key = strings.TrimSpace(e.cfg.APIKey)
 	}
-	if key != "" && e.cfg.CPAURL != "" {
-		ids, err := e.fetchModelIDs(key)
-		if err != nil {
-			e.logf("WARN /v1/models failed (%s); using config aliases or the static model list", err.Error())
-		} else if len(ids) > 0 {
-			return modelSnap{IDs: ids, Upstream: upstream, Source: "CPA /v1/models"}
+	base := e.cfg.CPAURL
+	if base == "" || (!e.cfg.CPAURLExplicit && base == config.DefaultCPAURL && host.URL != "") {
+		base = host.URL
+	}
+	if base == "" {
+		base = config.DefaultCPAURL
+	}
+	ids, err := e.fetchModelIDs(base, key)
+	if err == nil {
+		return modelSnap{IDs: ids, Upstream: host.Upstream, Source: "CPA /v1/models"}
+	}
+	message := err.Error()
+	if configErr != nil && e.cfg.APIKey == "" {
+		message += "; " + configErr.Error()
+	}
+	if key == "" {
+		message += "; 未找到客户端 API Key：请检查 cpa_config 的 access.api-keys（旧版 api-keys），或设置插件 api_key；不要使用 Management Key"
+	}
+	snap := modelSnap{Upstream: host.Upstream, Source: "none", Error: message}
+	if len(host.Upstream) > 0 {
+		for alias := range host.Upstream {
+			snap.IDs = append(snap.IDs, alias)
 		}
+		sort.Strings(snap.IDs)
+		snap.Source = "config.yaml (fallback)"
+	} else if len(e.cfg.Models) > 0 {
+		snap.IDs = uniqueModels(e.cfg.Models)
+		snap.Source = "plugin config"
 	}
-	if len(upstream) > 0 {
-		ids := make([]string, 0, len(upstream))
-		for alias := range upstream {
-			ids = append(ids, alias)
-		}
-		sort.Strings(ids)
-		return modelSnap{IDs: ids, Upstream: upstream, Source: "config.yaml"}
-	}
-	if len(e.cfg.Models) > 0 {
-		ids := append([]string(nil), e.cfg.Models...)
-		sort.Strings(ids)
-		return modelSnap{IDs: ids, Upstream: map[string]string{}, Source: "plugin config"}
-	}
-	return modelSnap{Upstream: map[string]string{}, Source: "none"}
+	return snap
 }
 
-func (e *Engine) fetchModelIDs(key string) ([]string, error) {
-	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(e.cfg.CPAURL, "/")+"/v1/models", nil)
+func (e *Engine) fetchModelIDs(base, key string) ([]string, error) {
+	endpoint, err := modelsEndpoint(base)
 	if err != nil {
-		return nil, err
+		return nil, UserError("cpa_url 必须是有效的 HTTP(S) URL")
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	req, err := http.NewRequestWithContext(e.ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, UserError("无法创建模型列表请求")
+	}
+	// /v1/models authenticates CLIENT API keys, never a management secret.
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	req.Header.Set("Accept", "application/json")
-	client := e.httpClient()
-	client = &http.Client{Timeout: 20 * time.Second, Transport: client.Transport}
+	client := &http.Client{Timeout: 20 * time.Second, Transport: e.httpClient().Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GET %s: %s (检查容器内地址、端口、TLS 和 cpa_url)", endpoint, redactModelError(err.Error(), key))
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GET %s: 读取响应失败", endpoint)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, UserError("HTTP " + resp.Status)
+		detail := responseMessage(body)
+		return nil, fmt.Errorf("GET %s: HTTP %d %s%s", endpoint, resp.StatusCode, http.StatusText(resp.StatusCode), redactModelError(detail, key))
 	}
-	var payload struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	if len(body) > 4<<20 {
+		return nil, fmt.Errorf("GET %s: HTTP %d 响应超过 4 MiB", endpoint, resp.StatusCode)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
+	ids, err := parseModelIDs(body)
+	if err != nil {
+		return nil, fmt.Errorf("GET %s: HTTP %d %s", endpoint, resp.StatusCode, redactModelError(err.Error(), key))
 	}
-	seen := map[string]struct{}{}
-	var ids []string
-	for _, item := range payload.Data {
-		id := strings.TrimSpace(item.ID)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("GET %s: HTTP %d 模型列表为空；请先在 CPA 配置并启用可用的上游凭据", endpoint, resp.StatusCode)
 	}
-	sort.Strings(ids)
 	return ids, nil
 }
 
-var (
-	accessBlockRE = regexp.MustCompile(`(?m)^access:\s*\n((?:[ \t]+.*\n|\s*\n)+)`)
-	apiKeyRE      = regexp.MustCompile(`api-keys:\s*\n(?:\s*#.*\n)*\s*-\s*["']?([^"'\s#]+)`)
-	modelNameRE   = regexp.MustCompile(`^\s+-\s+name:\s*["']?([^"'#]+?)["']?\s*$`)
-	aliasRE       = regexp.MustCompile(`^\s+alias:\s*["']?([^"'#]+?)["']?\s*$`)
-)
+func modelsEndpoint(base string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid URL")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	if strings.HasSuffix(u.Path, "/v1/models") {
+		return u.String(), nil
+	}
+	if strings.HasSuffix(u.Path, "/v1") {
+		u.Path += "/models"
+	} else {
+		u.Path += "/v1/models"
+	}
+	return u.String(), nil
+}
 
-func readCPAConfig(path string) (string, map[string]string) {
-	upstream := map[string]string{}
+func responseMessage(body []byte) string {
+	var doc struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(body, &doc) != nil {
+		return "；响应不是 JSON（检查反向代理/Cloudflare Access 登录或重定向）"
+	}
+	var message string
+	_ = json.Unmarshal(doc.Error, &message)
+	if message == "" {
+		var nested struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(doc.Error, &nested)
+		message = nested.Message
+	}
+	if message == "" {
+		message = doc.Message
+	}
+	if message == "" {
+		return ""
+	}
+	return ": " + trimRunes(message, 300)
+}
+
+func redactModelError(message, key string) string {
+	if key != "" {
+		message = strings.ReplaceAll(message, key, "[redacted]")
+	}
+	return message
+}
+
+func parseModelIDs(body []byte) ([]string, error) {
+	var value any
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, UserError("响应不是有效 JSON（检查代理是否返回 HTML 登录页）")
+	}
+	if doc, ok := value.(map[string]any); ok {
+		if _, hasError := doc["error"]; hasError {
+			return nil, UserError("模型接口返回错误" + responseMessage(body))
+		}
+		if data, exists := doc["data"]; exists {
+			value = data
+		} else if models, exists := doc["models"]; exists {
+			value = models
+		} else {
+			return nil, UserError("无法识别模型 JSON：缺少 data/models 数组")
+		}
+	}
+	list, ok := value.([]any)
+	if !ok {
+		return nil, UserError("无法识别模型 JSON：模型列表必须是数组")
+	}
+	var ids []string
+	for _, item := range list {
+		id, ok := item.(string)
+		if !ok {
+			obj, valid := item.(map[string]any)
+			if !valid {
+				return nil, UserError("模型条目必须是字符串或含 id/name 的对象")
+			}
+			id, _ = obj["id"].(string)
+			if strings.TrimSpace(id) == "" {
+				id, _ = obj["name"].(string)
+			}
+		}
+		if strings.TrimSpace(id) == "" {
+			return nil, UserError("模型条目缺少有效的 id/name")
+		}
+		ids = append(ids, id)
+	}
+	return uniqueModels(ids), nil
+}
+
+func uniqueModels(ids []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+type cpaConfig struct {
+	Key, URL string
+	Upstream map[string]string
+}
+
+func readCPAConfig(path string) (cpaConfig, error) {
+	result := cpaConfig{Upstream: map[string]string{}}
 	if strings.TrimSpace(path) == "" {
-		return "", upstream
+		return result, UserError("未指定 cpa_config")
 	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", upstream
+		return result, fmt.Errorf("无法读取 cpa_config %q（使用容器内路径）", path)
 	}
-	text := string(raw)
-	key := ""
-	if m := accessBlockRE.FindStringSubmatch(text); len(m) == 2 {
-		if k := apiKeyRE.FindStringSubmatch(m[1]); len(k) == 2 {
-			key = k[1]
+	var doc map[string]any
+	if yaml.Unmarshal(raw, &doc) != nil {
+		return result, UserError("cpa_config 不是有效的 YAML 配置")
+	}
+	// New access.api-keys takes precedence even when explicitly empty.
+	keys := doc["api-keys"]
+	if access, ok := doc["access"].(map[string]any); ok {
+		if v, exists := access["api-keys"]; exists {
+			keys = v
 		}
 	}
-	pending := ""
-	for _, line := range strings.Split(text, "\n") {
-		if mn := modelNameRE.FindStringSubmatch(line); len(mn) == 2 {
-			pending = strings.TrimSpace(mn[1])
-			continue
-		}
-		if ma := aliasRE.FindStringSubmatch(line); len(ma) == 2 && pending != "" {
-			upstream[strings.TrimSpace(ma[1])] = pending
-			pending = ""
+	if list, ok := keys.([]any); ok {
+		for _, item := range list {
+			if key, ok := item.(string); ok && strings.TrimSpace(key) != "" {
+				result.Key = strings.TrimSpace(key)
+				break
+			}
 		}
 	}
-	return key, upstream
+	server := doc
+	if v, ok := doc["server"].(map[string]any); ok {
+		server = v
+	}
+	host, _ := server["host"].(string)
+	if host == "" || host == "0.0.0.0" {
+		host = "127.0.0.1"
+	} else if host == "::" {
+		host = "::1"
+	}
+	port := 8317
+	if v, ok := server["port"].(int); ok && v > 0 && v < 65536 {
+		port = v
+	}
+	scheme := "http"
+	if tls, ok := server["tls"].(map[string]any); ok && tls["enable"] == true {
+		scheme = "https"
+	}
+	result.URL = scheme + "://" + net.JoinHostPort(host, strconv.Itoa(port))
+	// Restrict traversal to provider/model trees; never scan plugin config,
+	// management.secret-key or api-key fields for client credentials.
+	for _, field := range []string{"api-keys", "oauth", "oauth-model-alias", "gemini-api-key", "claude-api-key", "codex-api-key", "vertex-api-key", "openai-compatibility"} {
+		collectAliases(doc[field], result.Upstream)
+	}
+	return result, nil
+}
+
+func collectAliases(value any, aliases map[string]string) {
+	switch value := value.(type) {
+	case []any:
+		for _, item := range value {
+			collectAliases(item, aliases)
+		}
+	case map[string]any:
+		name, _ := value["name"].(string)
+		alias, _ := value["alias"].(string)
+		if name != "" && alias != "" {
+			aliases[strings.TrimSpace(alias)] = strings.TrimSpace(name)
+		}
+		for _, child := range value {
+			collectAliases(child, aliases)
+		}
+	}
 }
 
 func loadNames(path string) namesDoc {
@@ -197,6 +357,7 @@ func (e *Engine) signature(snap modelSnap) signature {
 	return signature{
 		Hash:        hex.EncodeToString(sum[:])[:16],
 		Source:      snap.Source,
+		Error:       snap.Error,
 		ConfigMtime: fileMtime(e.cfg.CPAConfig),
 		NamesMtime:  fileMtime(e.cfg.NamesFile),
 	}

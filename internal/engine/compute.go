@@ -28,8 +28,22 @@ func (e *Engine) computeBody(pull bool, reason string) error {
 
 func (e *Engine) computeLocked(pull bool, reason string, snap modelSnap, names namesDoc) error {
 	started := time.Now()
+	discovered := append([]string(nil), snap.IDs...)
+	manual := append([]string(nil), e.state.ManualModels...)
+	snap.IDs = uniqueModels(append(append([]string(nil), snap.IDs...), manual...))
+	sigSnap := snap
+	sigSnap.IDs = discovered // Manual edits already run Apply; discovery signature tracks CPA only.
+	if len(discovered) == 0 && len(manual) > 0 {
+		snap.Source = "manual"
+	}
+	e.status.ModelError = snap.Error
 	if len(snap.IDs) == 0 {
 		e.status.Error = "no models from CPA, config.yaml, or the static models list; prompts.json was left unchanged"
+		if snap.Error != "" {
+			e.status.Error = snap.Error + "; prompts.json was left unchanged"
+		}
+		e.status.ModelSource = snap.Source
+		e.status.Sig = e.signature(sigSnap)
 		e.status.LastRun = e.stamp()
 		e.status.Reason = reason
 		_ = e.saveStatusLocked()
@@ -234,7 +248,7 @@ func (e *Engine) computeLocked(pull bool, reason string, snap modelSnap, names n
 			used[cand.Key] = struct{}{}
 		}
 		row := Row{
-			Model: model, Upstream: upstream, InCPA: true, Candidates: cands,
+			Model: model, Upstream: upstream, InCPA: contains(discovered, model), Candidates: cands,
 			Provider: names.Provider[model], Pointer: names.Pointer[model],
 			OldNames: nonNil(oldNames[model]), Source: "none",
 		}
@@ -362,6 +376,15 @@ func (e *Engine) computeLocked(pull bool, reason string, snap modelSnap, names n
 			unused = append(unused, ref)
 		}
 	}
+	// A discovery outage must not erase previously generated prompts while
+	// an operator adds a manual model or uses a configuration fallback.
+	if snap.Error != "" {
+		for model, text := range current {
+			if _, exists := modelSet[model]; !exists {
+				output[model] = text
+			}
+		}
+	}
 	order := make([]string, 0, len(output))
 	seen := map[string]struct{}{}
 	for _, key := range currentFile.Order {
@@ -434,7 +457,7 @@ func (e *Engine) computeLocked(pull bool, reason string, snap modelSnap, names n
 		LastRun: e.stamp(), LastRunKind: kind, Reason: reason,
 		LastSync: prevStatus.LastSync, DurationS: roundSeconds(time.Since(started)),
 		Changed: changed, ModelSource: snap.Source, Models: append([]string(nil), snap.IDs...),
-		Repos: repoStatus, Sig: e.signature(snap), HiddenAliases: names.Aliases,
+		Repos: repoStatus, ModelError: snap.Error, Sig: e.signature(sigSnap), HiddenAliases: names.Aliases,
 		StoredOnly: storedOnly, Rows: rows, Conflicts: conflicts, Unmatched: unmatched,
 		UnusedTotal: len(unused), FilesTotal: len(allFiles), OutputKeys: order,
 	}
@@ -535,6 +558,7 @@ func roundSeconds(d time.Duration) float64 {
 
 func (s State) clone() State {
 	out := s
+	out.ManualModels = append([]string(nil), s.ManualModels...)
 	out.Repos = append([]Repo(nil), s.Repos...)
 	out.Overrides = map[string]Override{}
 	for k, v := range s.Overrides {

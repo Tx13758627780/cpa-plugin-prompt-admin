@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -24,17 +25,18 @@ const (
 
 // Config is the validated plugin configuration.
 type Config struct {
-	Enabled       bool
-	Priority      int
-	DataDir       string
-	CPAURL        string
-	CPAConfig     string
-	APIKey        string
-	NamesFile     string
-	Models        []string
-	WatchInterval time.Duration
-	SyncInterval  time.Duration
-	AllowFileURLs bool
+	Enabled        bool
+	Priority       int
+	DataDir        string
+	CPAURL         string
+	CPAURLExplicit bool
+	CPAConfig      string
+	APIKey         string
+	NamesFile      string
+	Models         []string
+	WatchInterval  time.Duration
+	SyncInterval   time.Duration
+	AllowFileURLs  bool
 }
 
 type fileConfig struct {
@@ -93,6 +95,7 @@ func Parse(raw []byte) (Config, error) {
 	cfg := Config{
 		Enabled:       true,
 		CPAURL:        DefaultCPAURL,
+		CPAConfig:     hostConfigPath(os.Args[1:]),
 		DataDir:       "prompt-admin-data",
 		WatchInterval: 15 * time.Second,
 		SyncInterval:  time.Hour,
@@ -124,6 +127,7 @@ func Parse(raw []byte) (Config, error) {
 	}
 	if file.CPAURL != nil && strings.TrimSpace(*file.CPAURL) != "" {
 		cfg.CPAURL = strings.TrimRight(strings.TrimSpace(*file.CPAURL), "/")
+		cfg.CPAURLExplicit = true
 	}
 	if file.CPAConfig != nil {
 		cfg.CPAConfig = strings.TrimSpace(*file.CPAConfig)
@@ -167,6 +171,9 @@ func (cfg Config) validate() error {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return fmt.Errorf("cpa_url must be an http(s) URL")
 	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("cpa_url must not contain credentials, query parameters, or a fragment")
+	}
 	if strings.ContainsRune(cfg.CPAConfig, 0) || strings.ContainsRune(cfg.NamesFile, 0) || strings.ContainsRune(cfg.APIKey, 0) {
 		return fmt.Errorf("config paths and api_key must not contain NUL")
 	}
@@ -177,4 +184,22 @@ func (cfg Config) validate() error {
 		return fmt.Errorf("sync_interval must be 0 (disabled) or between %s and %s", minSync, maxSync)
 	}
 	return nil
+}
+
+// CPA and this native plugin share a process and working directory, including in
+// Docker. Respect the host's -config flag rather than a host-machine mount path.
+func hostConfigPath(args []string) string {
+	for i, arg := range args {
+		if arg == "-config" || arg == "--config" {
+			if i+1 < len(args) && strings.TrimSpace(args[i+1]) != "" {
+				return args[i+1]
+			}
+		}
+		for _, prefix := range []string{"-config=", "--config="} {
+			if strings.HasPrefix(arg, prefix) && strings.TrimSpace(strings.TrimPrefix(arg, prefix)) != "" {
+				return strings.TrimPrefix(arg, prefix)
+			}
+		}
+	}
+	return "config.yaml"
 }

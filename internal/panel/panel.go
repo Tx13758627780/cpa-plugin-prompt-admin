@@ -76,6 +76,16 @@ func Handle(eng *engine.Engine, method, path string, query map[string][]string, 
 		return jsonResult(http.StatusBadRequest, map[string]any{"error": err.Error()})
 	}
 	switch action {
+	case "refresh":
+		// Return diagnostics in the snapshot even when discovery fails.
+		if err := eng.Apply("manual:models"); err != nil {
+			if _, ok := err.(engine.UserError); !ok {
+				return actionError(err)
+			}
+		}
+		return jsonResult(http.StatusOK, eng.CachedSnapshot())
+	case "manual":
+		return actionResult(eng.SetManualModel(str(payload, "model"), truthy(payload["remove"])), "已更新手动模型")
 	case "sync":
 		ok, msg := eng.ManualSync()
 		return jsonResult(http.StatusOK, map[string]any{"ok": true, "started": ok, "msg": msg})

@@ -128,10 +128,8 @@ func (e *Engine) loop() {
 		case <-e.ctx.Done():
 			return
 		case <-watch.C:
-			if e.isStale() {
-				if err := e.Apply("auto:watch"); err != nil {
-					e.logf("WARN auto refresh failed: %v", err)
-				}
+			if err := e.refreshIfStale("auto:watch"); err != nil {
+				e.logf("WARN auto refresh failed: %v", err)
 			}
 		case <-syncC:
 			if !e.SyncAsync(true, "timer") {
@@ -141,15 +139,25 @@ func (e *Engine) loop() {
 	}
 }
 
-func (e *Engine) isStale() bool {
+func (e *Engine) refreshIfStale(reason string) error {
 	e.mu.Lock()
-	running := e.running
-	prev := e.status.Sig
+	running, prev := e.running, e.status.Sig
 	e.mu.Unlock()
 	if running {
-		return false
+		return nil
 	}
-	return e.signature(e.fetchModels()) != prev
+	snap := e.fetchModels()
+	if e.signature(snap) == prev {
+		return nil
+	}
+	if err := e.acquire("apply"); err != nil {
+		return err
+	}
+	defer e.release()
+	names := loadNames(e.cfg.NamesFile)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.computeLocked(false, reason, snap, names)
 }
 
 // Prompts returns the resolved prompt map and hidden old->current aliases.
@@ -162,9 +170,12 @@ func (e *Engine) Prompts() (map[string]string, map[string]string) {
 }
 
 func (e *Engine) Snapshot() Snapshot {
-	if e.isStale() {
-		_ = e.Apply("auto:page")
-	}
+	_ = e.refreshIfStale("auto:page")
+	return e.CachedSnapshot()
+}
+
+// CachedSnapshot is used after an explicit refresh to avoid a second HTTP fetch.
+func (e *Engine) CachedSnapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.snapshotLocked()
@@ -179,7 +190,8 @@ func (e *Engine) snapshotLocked() Snapshot {
 		})
 	}
 	return Snapshot{
-		Repos: repos, Overrides: e.state.Overrides, Local: e.state.Local, Choices: e.state.Choices,
+		ManualModels: nonNil(e.state.ManualModels),
+		Repos:        repos, Overrides: e.state.Overrides, Local: e.state.Local, Choices: e.state.Choices,
 		DefaultPrompt: e.state.DefaultPrompt, Status: e.status, Log: e.logTail(200),
 		Sync: SyncInfo{Running: e.running, Started: e.started, Kind: e.kind},
 	}
@@ -475,6 +487,28 @@ func (e *Engine) SetLocal(model, text string) error {
 		}
 		delete(st.Local, model)
 		e.logf("本地提示词 removed for %s", model)
+		return nil
+	})
+}
+
+// SetManualModel persists an explicit model independently of discovery. This
+// lets an operator edit/inject prompts while model-list access is unavailable.
+func (e *Engine) SetManualModel(model string, remove bool) error {
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > 512 || strings.ContainsAny(model, "\r\n\x00") {
+		return UserError("模型名不能为空、超过 512 字节或包含换行/NUL")
+	}
+	return e.mutate(false, "models/manual", func(st *State) error {
+		next := []string{}
+		for _, id := range st.ManualModels {
+			if id != model {
+				next = append(next, id)
+			}
+		}
+		if !remove {
+			next = append(next, model)
+		}
+		st.ManualModels = uniqueModels(next)
 		return nil
 	})
 }

@@ -1,5 +1,5 @@
 PLUGIN_ID := prompt-admin
-VERSION ?= 0.1.3
+VERSION ?= 0.1.4
 DIST := dist
 LDFLAGS := -s -w -X cpa-plugin-prompt-admin/internal/runtime.Version=$(VERSION)
 
@@ -17,7 +17,7 @@ MACOSX_SDK_URL := https://github.com/joseluisq/macosx-sdks/releases/download/14.
 DARWIN_CGO_LDFLAGS := -mmacosx-version-min=11.3 -F$(MACOSX_SDK)/System/Library/Frameworks -L$(MACOSX_SDK)/usr/lib
 DARWIN_CC_COMMON := -isysroot $(MACOSX_SDK) -iwithsysroot /usr/include -iframeworkwithsysroot /System/Library/Frameworks -F$(MACOSX_SDK)/System/Library/Frameworks -L$(MACOSX_SDK)/usr/lib
 
-.PHONY: fmt fmt-check test build release release-nodarwin release-clean release-other macos-sdk checksums clean
+.PHONY: fmt fmt-check test test-ui build release release-nodarwin release-clean release-other macos-sdk checksums clean
 
 fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './dist/*')
@@ -27,6 +27,10 @@ fmt-check:
 
 test:
 	env -u GOOS -u GOARCH -u CC -u CGO_LDFLAGS CGO_ENABLED=0 go test ./internal/...
+	$(MAKE) test-ui
+
+test-ui:
+	node --test internal/panel/panel.test.cjs
 
 # Linux amd64 library named for the plugin id. CPA loads plugins/<os>/<arch>/$(PLUGIN_ID).so.
 build:

@@ -2,6 +2,7 @@ package panel
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -48,5 +49,42 @@ func TestPageAndDefaultPrompt(t *testing.T) {
 	state := Handle(eng, http.MethodGet, "/state", nil, nil)
 	if !strings.Contains(string(state.Body), "fallback") {
 		t.Fatalf("state = %s", state.Body)
+	}
+}
+
+func TestRefreshDiagnosticsAndManualModelActions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"Invalid API key"}`))
+	}))
+	defer server.Close()
+	eng, err := engine.Open(config.Config{DataDir: t.TempDir(), CPAURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	refreshed := Handle(eng, http.MethodPost, "/plugins/prompt-admin/models/refresh", nil, []byte(`{}`))
+	if refreshed.Status != http.StatusOK || !strings.Contains(string(refreshed.Body), "HTTP 401 Unauthorized: Invalid API key") {
+		t.Fatalf("refresh %d %s", refreshed.Status, refreshed.Body)
+	}
+	added := Handle(eng, http.MethodPost, "/plugins/prompt-admin/models/manual", nil, []byte(`{"model":"custom-model"}`))
+	if added.Status != http.StatusOK {
+		t.Fatalf("manual %d %s", added.Status, added.Body)
+	}
+	saved := Handle(eng, http.MethodPost, "/plugins/prompt-admin/local", nil, []byte(`{"model":"custom-model","text":"custom prompt"}`))
+	if saved.Status != http.StatusOK {
+		t.Fatalf("local %d %s", saved.Status, saved.Body)
+	}
+	prompts, _ := eng.Prompts()
+	if prompts["custom-model"] != "custom prompt" {
+		t.Fatalf("manual prompt not effective: %v", prompts)
+	}
+	invalid := Handle(eng, http.MethodPost, "/plugins/prompt-admin/models/manual", nil, []byte(`{"model":""}`))
+	if invalid.Status != http.StatusBadRequest {
+		t.Fatalf("invalid status %d", invalid.Status)
+	}
+	denied := Handle(eng, http.MethodGet, "/plugins/prompt-admin/models/refresh", nil, nil)
+	if denied.Status == http.StatusOK {
+		t.Fatal("GET must not mutate discovery")
 	}
 }

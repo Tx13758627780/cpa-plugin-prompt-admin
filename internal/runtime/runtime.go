@@ -29,7 +29,7 @@ const (
 )
 
 // Version is set by the main package from ldflags.
-var Version = "0.1.3"
+var Version = "0.1.4"
 
 // Service owns one engine and the short-lived injection marks used to label responses.
 type Service struct {
@@ -407,8 +407,8 @@ func Metadata() pluginapi.Metadata {
 		GitHubRepository: pluginRepo,
 		ConfigFields: []pluginapi.ConfigField{
 			{Name: "data_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Directory for prompts, git clones, backups, and sync logs. Default: prompt-admin-data under the CPA working directory."},
-			{Name: "cpa_url", Type: pluginapi.ConfigFieldTypeString, Description: "Base URL used to read GET /v1/models. Default: http://127.0.0.1:8317."},
-			{Name: "cpa_config", Type: pluginapi.ConfigFieldTypeString, Description: "Optional CPA config.yaml. The first access api-key and alias map are read from it. The key is not logged or returned."},
+			{Name: "cpa_url", Type: pluginapi.ConfigFieldTypeString, Description: "Base URL used to read GET /v1/models. If omitted, infer host/port/TLS from cpa_config; accepts a reverse-proxy prefix or /v1."},
+			{Name: "cpa_config", Type: pluginapi.ConfigFieldTypeString, Description: "CPA config.yaml (container path). Default: host -config flag or config.yaml. Reads v8 access.api-keys or legacy api-keys and aliases. The key is not logged or returned."},
 			{Name: "api_key", Type: pluginapi.ConfigFieldTypeString, Description: "Optional advanced override for GET /v1/models only. Not required: the model list comes from cpa_config access.api-keys (or static models). Never logged or returned."},
 			{Name: "names_file", Type: pluginapi.ConfigFieldTypeString, Description: "Optional JSON file of hidden aliases (old name to current name). Without it, alias rewrite is off."},
 			{Name: "models", Type: pluginapi.ConfigFieldTypeArray, Description: "Static model ids used when /v1/models and cpa_config yield none."},
@@ -429,6 +429,8 @@ func ManagementRegistration() ManagementRegistrationResponse {
 		Routes: []ManagementRoute{
 			{Method: http.MethodGet, Path: base + "/state", Description: "当前提示词、仓库和冲突快照"},
 			{Method: http.MethodGet, Path: base + "/file", Description: "读取一个仓库文件的全文"},
+			post("/models/refresh", "手动刷新模型列表并返回错误详情"),
+			post("/models/manual", "添加或移除手动模型名"),
 			post("/sync", "立即拉取仓库并重新匹配"),
 			post("/repos/add", "添加一个提示词仓库"),
 			post("/repos/remove", "删除一个提示词仓库"),

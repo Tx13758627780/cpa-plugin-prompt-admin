@@ -13,7 +13,7 @@ Release archives are published on the [Releases page](https://github.com/Tx13758
 ### Option A: manual drop-in (.so)
 
 ```bash
-VER=0.1.3
+VER=0.1.4
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/prompt-admin_${VER}_linux_amd64.zip
 curl -fLO https://github.com/Tx13758627780/cpa-plugin-prompt-admin/releases/download/v$VER/checksums.txt
 sha256sum --ignore-missing -c checksums.txt
@@ -43,7 +43,7 @@ To list it in a registry (your own, or the official `router-for-me/CLIProxyAPI-P
   "name": "Prompt Admin",
   "description": "Per-model system prompts with Git prompt-repo auto-matching and a Management Center page.",
   "author": "Tx13758627780",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "repository": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "homepage": "https://github.com/Tx13758627780/cpa-plugin-prompt-admin",
   "license": "MIT",
@@ -67,8 +67,8 @@ plugins:
       enabled: true
       priority: 100
       data_dir: prompt-admin-data
-      cpa_url: http://127.0.0.1:8317
-      # cpa_config: config.yaml
+      # cpa_url: http://127.0.0.1:8317 # override only; otherwise infer from host config
+      # cpa_config: config.yaml      # default: host -config argument or config.yaml
       # api_key: ""          # optional advanced override for GET /v1/models only; NOT required
       # names_file: names.json
       # models: [gpt-4o]     # used only when /v1/models and cpa_config yield nothing
@@ -95,6 +95,8 @@ For a CPA listening on port 8317 that is `http://127.0.0.1:8317/v0/resource/plug
 | --- | --- |
 | Snapshot | `GET /v0/management/plugins/prompt-admin/state` |
 | File text | `GET /v0/management/plugins/prompt-admin/file?key=` |
+| Refresh model discovery | `POST .../models/refresh` |
+| Add / remove manual model | `POST .../models/manual` (`model`, optional `remove`) |
 | Sync now | `POST .../sync` |
 | Add / remove / reorder / update a repo | `POST .../repos/add`, `remove`, `move`, `update` |
 | Keep one conflict candidate | `POST .../choose` |
@@ -181,7 +183,7 @@ All under `data_dir` (default `prompt-admin-data`, created `0700`):
 | Path | Contents |
 | --- | --- |
 | `prompts.json` | Resolved model to prompt map. The injector reloads it on mtime change. |
-| `state.json` | Repos (including tokens), overrides, local prompts, choices, default prompt. Mode `0600`. |
+| `state.json` | Repos (including tokens), overrides, local prompts, choices, default prompt, manual model names. Mode `0600`. |
 | `status.json` | Last match result, for the page. |
 | `repos/<id>/` | Shallow git clone or raw download. |
 | `backups/prompts.<timestamp>.json` | Previous `prompts.json`, 60 copies kept. |
@@ -190,11 +192,19 @@ All under `data_dir` (default `prompt-admin-data`, created `0700`):
 
 Git is invoked with a cleaned environment. A repo token is passed as an HTTP extra header, not as a process argument, and it is not written to the management API. `git` must be on `PATH` for git repos. A single raw HTTPS file does not need git. `file://` repos work only when `allow_file_urls` is true.
 
-The model list prefers `GET {cpa_url}/v1/models` when a bearer is available: an optional `api_key` override, otherwise the first `api-keys` entry under `access` in `cpa_config`. `api_key` is **not required**. If `/v1/models` is unavailable, alias names in `cpa_config` are used. If those are empty, `models` in this plugin's config is used. When every source is empty, `prompts.json` is left unchanged and the page shows an error.
+The model list uses `GET /v1/models` with a **client API key**, separate from the Management Key used by the browser. The optional plugin `api_key` overrides the first client key from `access.api-keys` (v8) or top-level `api-keys` (legacy). YAML is parsed structurally, including inline lists, quoted keys and v8 provider groups; upstream provider keys and `management.secret-key` / `remote-management.secret-key` are never used as client keys. If no key exists, a request without Authorization is still attempted for hosts with client authentication disabled.
+
+`cpa_config` defaults to the host process's `-config` / `--config` argument, otherwise `config.yaml` in its working directory. In the official Docker image this is `/CLIProxyAPI/config.yaml`; use a container path for custom mounts. If `cpa_url` is omitted, the plugin reads `server.host/port/tls` (v8) or `host/port/tls` (legacy); wildcard binds become loopback destinations. The plugin runs **inside CPA**, so loopback addresses refer to the CPA container, not the browser or Docker host. An explicit `cpa_url` overrides inference and may include a proxy prefix or end in `/v1`. For custom TLS certificates, use a URL matching the certificate and a trusted CA.
+
+The browser uses same-origin plugin requests and preserves any path prefix, e.g. `/cpa/v0/resource/...` maps to `/cpa/v0/management/...`. A reverse proxy or Cloudflare Tunnel must forward both resource and management routes and retain `Authorization`. There are no browser-to-loopback model requests or additional cross-origin model requests. Non-JSON responses, denied access and redirects surface as errors; fix Cloudflare Access/proxy policies if a login page replaces an API response.
+
+Model responses accept OpenAI `data`, legacy `models` and bare arrays containing `id` / `name` objects or strings. Unknown fields, invalid entries, HTTP failures and empty lists produce diagnostics in `status.model_error`. If discovery fails, configured aliases, then plugin `models`, provide a fallback. The page retains the error even with fallback rows. **手动刷新模型列表** forces a new fetch and recomputation. **手动输入模型名** adds a persistent name to `state.json` so prompts can be edited and injected without discovery; **移除手动** removes that explicit registration without deleting stored prompt text. It does not create an upstream model or verify that inference will succeed.
+
+When every source is empty, `prompts.json` stays unchanged. During a discovery outage existing prompt entries are retained while fallback/manual models are edited. When discovery recovers, normal live-model pruning resumes; manual registrations remain active until removed.
 
 ## Build
 
-Requires Go 1.26, a C compiler, and cgo.
+Requires Go 1.26, a C compiler, and cgo. Tests also require Node.js 22 (built-in test runner; no npm dependencies).
 
 ```bash
 make test
@@ -214,7 +224,7 @@ make release-nodarwin CC_LINUX_ARM64="zig cc -target aarch64-linux-gnu.2.17" CC_
 
 Darwin cgo needs `zig` plus a MacOSX SDK, because the Go runtime links `CoreFoundation`, `Security`, and `libresolv`. `make release` downloads [MacOSX 14.5.sdk](https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz) into `.cache/` when `MACOSX_SDK` is unset. That SDK is Apple's; accept the Xcode license terms before using it. Point `MACOSX_SDK` at an existing SDK tree to skip the download.
 
-Version defaults to `0.1.3`. Override with `make release VERSION=0.1.4`.
+Version defaults to `0.1.4`. See [v0.1.4 investigation and release steps](RELEASE_v0.1.4.md).
 
 ## Behavior that is intentionally narrower than a standalone gateway
 
@@ -236,6 +246,8 @@ Version defaults to `0.1.3`. Override with `make release VERSION=0.1.4`.
 - **验证注入**：保存某模型的提示词后调用 `/v1/chat/completions`，响应头中出现 `X-Prompt-Admin: injected` 即表示已注入。
 
 ## Changelog
+
+- **0.1.4**: fixes fresh Docker model discovery with automatic host config detection, structural v8/legacy YAML parsing and listener inference; preserves proxy prefixes; reports HTTP/JSON/empty-list failures; adds explicit refresh and persistent manual models, outage prompt retention, Go/JavaScript regression tests and CI on main/PRs.
 
 - **0.1.3**: the management page reads the current Management Center session again. It decodes both `enc::v2::` storage (key `cli-proxy-api-webui::secure-storage|<host>`) and legacy `enc::v1::` storage (key also includes the browser user agent), and takes the key from the `cli-proxy-auth` store. When no key is found, the notice says to tick 「记住密码」 when logging in to the Management Center and reopen 「模型提示词」.
 - **0.1.2**: adds macOS builds (`darwin_amd64`, `darwin_arm64`, `prompt-admin.dylib`) and a GitHub Actions release workflow that builds all five platform zips plus `checksums.txt` on tag push.

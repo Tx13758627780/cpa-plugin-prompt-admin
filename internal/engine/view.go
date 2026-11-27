@@ -55,6 +55,7 @@ type Status struct {
 	LastSync      string                `json:"last_sync,omitempty"`
 	DurationS     float64               `json:"duration_s,omitempty"`
 	Changed       bool                  `json:"changed"`
+	ModelError    string                `json:"model_error,omitempty"`
 	ModelSource   string                `json:"model_source,omitempty"`
 	Models        []string              `json:"models,omitempty"`
 	Repos         map[string]RepoStatus `json:"repos,omitempty"`
@@ -90,6 +91,7 @@ type SyncInfo struct {
 }
 
 type Snapshot struct {
+	ManualModels  []string            `json:"manual_models"`
 	Repos         []RepoView          `json:"repos"`
 	Overrides     map[string]Override `json:"overrides"`
 	Local         map[string]string   `json:"local"`

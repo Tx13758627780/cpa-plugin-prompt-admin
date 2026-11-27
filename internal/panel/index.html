@@ -38,6 +38,7 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 </style>
 </head>
 <body>
+<section id="pageErr" class="hidden" role="alert" style="margin:16px"><b>请求失败：</b><span id="pageErrText"></span> <button id="retryBtn">重试</button></section>
 <div id="auth" class="hidden">
   <h2 style="margin-top:0">模型提示词管理</h2>
   <div class="notice" id="authNotice">请先在 CPA 管理中心登录（登录时勾选「记住密码」），然后从管理中心菜单重新打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。</div>
@@ -54,8 +55,8 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 </header>
 <main>
   <section id="secErr" class="hidden">
-    <h2>模型列表不可用</h2>
-    <div id="statusErr" class="small" style="color:var(--bad)"></div>
+    <h2>模型列表加载诊断</h2>
+    <div id="statusErr" role="alert" class="small" style="color:var(--bad)"></div>
   </section>
   <section id="secConflicts" class="hidden">
     <h2>⚠️ 待处理的重复匹配 <span class="tag warn" id="conflictCount"></span></h2>
@@ -80,6 +81,12 @@ th{font-size:12px;color:var(--mute);font-weight:600}
     <h2>模型与当前提示词 <span class="mute small" id="modelMeta"></span></h2>
     <div class="row" style="margin-bottom:8px"><input id="mFilter" placeholder="筛选模型…" style="min-width:220px">
       <label class="small"><input type="checkbox" id="onlyPrompt"> 只看有提示词的</label></div>
+    <div class="row" style="margin-bottom:8px">
+      <button id="refreshModels">手动刷新模型列表</button>
+      <input id="manualModel" aria-label="手动输入模型名" placeholder="手动输入模型名，例如 gpt-4o" style="min-width:260px">
+      <button id="addManualModel">添加手动模型</button>
+      <span class="small mute">列表不可用时仍可保存提示词；手动模型需与调用时的模型名一致。</span>
+    </div>
     <table><thead><tr><th style="width:26%">模型</th><th style="width:20%">来源 / 分数</th><th>当前提示词</th><th style="width:90px"></th></tr></thead><tbody id="models"></tbody></table>
   </section>
 
@@ -135,7 +142,9 @@ th{font-size:12px;color:var(--mute);font-weight:600}
 
 <script>
 const $=s=>document.querySelector(s);
-const API='/v0/management/plugins/prompt-admin';
+// Plugin-defined routes remain under v0 on v8 CPA. Keep a proxy path prefix.
+function pluginAPIPath(pathname){const m=pathname.match(/^(.*?)\/v(?:0|8)\/(?:resource|management)\/plugins\/prompt-admin(?:\/.*)?$/);return (m?m[1]:'')+'/v0/management/plugins/prompt-admin'}
+const API=pluginAPIPath(window.location.pathname);
 const CPA_STORAGE_PREFIX='enc::v1::';
 const CPA_STORAGE_PREFIX_V2='enc::v2::';
 const CPA_STORAGE_SALT='cli-proxy-api-webui::secure-storage';
@@ -183,31 +192,43 @@ function managementKey(){return storedManagementKey()}
 const AUTH_NOTICE='未读取到管理中心保存的管理密钥。请在 CPA 管理中心登录时勾选「记住密码」，登录后从管理中心菜单重新打开「模型提示词」。本页会自动使用管理中心已保存的会话，无需再输入密钥。单独打开本资源地址无法进行编辑（这是设计如此）。';
 function showAuth(msg){$('#app').classList.add('hidden');$('#auth').classList.remove('hidden');$('#authNotice').textContent=msg||AUTH_NOTICE}
 function clearSessionKeyCopy(){removeStorageValue(safeSessionStorage(),SESSION_KEY)}
+function showPageError(message){$('#pageErr').classList.toggle('hidden',!message);$('#pageErrText').textContent=message||''}
 async function api(path,body){
   const key=managementKey();
-  if(!key){showAuth();throw new Error('未连接')}
-  const headers={Accept:'application/json'};
-  if(key)headers.Authorization='Bearer '+key;
+  if(!key){showAuth();throw new Error('未读取到 Management Key，请从管理中心重新打开插件')}
+  const headers={Accept:'application/json',Authorization:'Bearer '+key};
   const opt=body===undefined?{credentials:'same-origin',headers}:{method:'POST',credentials:'same-origin',headers:Object.assign({'Content-Type':'application/json'},headers),body:JSON.stringify(body)};
-  const r=await fetch(API+'/'+path,opt);let j={};try{j=await r.json()}catch(e){}
-  if(r.status===401){clearSessionKeyCopy();showAuth();throw new Error('未授权')}
-  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
-  if(key)writeStorageText(safeSessionStorage(),SESSION_KEY,key);
-  return j
+  const controller=new AbortController();opt.signal=controller.signal;
+  const timer=setTimeout(()=>controller.abort(),30000);
+  try{
+    let r;try{r=await fetch(API+'/'+path,opt)}catch(e){throw new Error(e.name==='AbortError'?'请求超时（30 秒）；请检查 CPA 和代理连接':'网络请求失败；请检查反向代理路径、同源访问和 CORS：'+e.message)}
+    const text=await r.text();let j;
+    try{j=JSON.parse(text)}catch(_e){throw new Error('HTTP '+r.status+'：响应不是 JSON，请检查反向代理或 Cloudflare Access 是否返回登录页')}
+    if(r.status===401){clearSessionKeyCopy();showAuth('HTTP 401：Management Key 无效或已过期。'+AUTH_NOTICE)}
+    if(!r.ok){const msg=j&&(typeof j.error==='string'?j.error:(j.error&&j.error.message)||j.message)||r.statusText;throw new Error('HTTP '+r.status+'：'+msg)}
+    if(!j||typeof j!=='object'||Array.isArray(j))throw new Error('HTTP '+r.status+'：插件返回了无法识别的 JSON');
+    writeStorageText(safeSessionStorage(),SESSION_KEY,key);
+    return j
+  }finally{clearTimeout(timer)}
 }
 $('#refreshBtn').onclick=()=>load();
+$('#retryBtn').onclick=()=>load();
+$('#refreshModels').onclick=async()=>{const button=$('#refreshModels');button.disabled=true;try{const result=await api('models/refresh',{});await load(result);toast(result.status&&result.status.model_error?'刷新完成，请查看模型列表诊断':'已刷新模型列表')}catch(e){showPageError(e.message)}finally{button.disabled=false}};
+$('#addManualModel').onclick=async()=>{const model=$('#manualModel').value.trim();if(!model)return toast('请填写模型名');if(await act('models/manual',{model},'已添加手动模型'))$('#manualModel').value=''};
 $('#syncBtn').onclick=async()=>{try{const j=await api('sync',{});toast(j.msg||'已开始同步');startPoll()}catch(e){toast(e.message)}};
 async function act(path,body,msg){try{const j=await api(path,body);toast(j.msg||msg||'已保存');await load();if(j.msg&&j.msg.includes('同步'))startPoll();return true}catch(e){toast('失败：'+e.message,5000);return false}}
 function startPoll(){if(polling)return;polling=setInterval(async()=>{await load();if(S&&!S.sync.running){clearInterval(polling);polling=null}},2000)}
 const SRC={'override-text':['强制覆盖（文字）','bad'],'override-file':['强制覆盖（文件）','bad'],'override-none':['强制不注入','mute'],local:['本地提示词','ok'],repo:['仓库自动匹配','ok'],chosen:['已选择（去重）','ok'],default:['默认提示词','mute'],conflict:['待选择（重复）','warn'],none:['无','mute']};
-async function load(){
-  let j;try{j=await api('state')}catch(e){return}
+async function load(snapshot){
+  let j;try{j=snapshot||await api('state');if(!j.status||!j.sync||!Array.isArray(j.repos))throw new Error('HTTP 200：插件状态 JSON 缺少 status/sync/repos 字段')}catch(e){showPageError(e.message);return false}
+  showPageError('');
   S=j;$('#app').classList.remove('hidden');$('#auth').classList.add('hidden');
   const st=j.status||{};
   $('#hdrMeta').textContent=`上次同步：${st.last_sync||'从未'} ｜ 上次计算：${st.last_run||'-'}（${st.reason||''}）`;
   $('#syncState').textContent=j.sync&&j.sync.running?'⏳ 同步中…':'';$('#syncBtn').disabled=!!(j.sync&&j.sync.running);
   if(j.sync&&j.sync.running)startPoll();
-  $('#secErr').classList.toggle('hidden',!st.error);$('#statusErr').textContent=st.error||'';
+  const diagnostic=[st.model_error,st.error].filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i).join('；');
+  $('#secErr').classList.toggle('hidden',!diagnostic);$('#statusErr').textContent=diagnostic;
   renderRepos(j,st);renderConflicts(st);renderModels(st);renderLists(st);
   if(document.activeElement!==$('#defaultPrompt'))$('#defaultPrompt').value=j.default_prompt||'';
   const lg=$('#log');lg.textContent=(j.log||[]).join('\n');lg.scrollTop=lg.scrollHeight;
@@ -239,7 +260,8 @@ function renderConflicts(st){const c=st.conflicts||[];$('#secConflicts').classLi
     box.append(el('div',{class:'conflict'},el('div',{class:'row',style:'margin-bottom:8px'},el('b',{class:'mono'},cf.model),cf.upstream?el('span',{class:'small mute'},'上游 '+cf.upstream):null,el('span',{class:'tag warn'},cf.why),el('span',{class:'small mute'},'当前暂用：'+(cf.previous?'上一次的提示词':'默认/无'))),g))}}
 function renderModels(st){const tb=$('#models');tb.innerHTML='';const f=$('#mFilter').value.toLowerCase(),only=$('#onlyPrompt').checked;
   const rows=st.rows||[];$('#modelMeta').textContent=`（${(st.models||[]).length} 个模型，来自 ${st.model_source||'-'}，实时刷新 · 更新于 ${st.last_run||'-'}；注入 ${ (st.output_keys||[]).length } 个${(st.stored_only||[]).length?`；已下线模型的提示词保留 ${st.stored_only.length} 个`:''}）`;
-  for(const r of rows){if(f&&!r.model.toLowerCase().includes(f))continue;if(only&&!r.prompt)continue;
+  let shown=0;
+  for(const r of rows){if(f&&!r.model.toLowerCase().includes(f))continue;if(only&&!r.prompt)continue;shown++;
     const [lab,cls]=SRC[r.source]||[r.source,'mute'];
     const src=el('div',{},el('span',{class:'tag '+cls},lab),r.score!=null?el('span',{class:'tag',style:'margin-left:4px'},'分数 '+r.score):null);
     const info=el('div',{class:'small mute'},r.key&&r.key!=='local:'?(r.key.split('::')[1]||''):'',r.reason?el('div',{},r.reason):null);
@@ -248,7 +270,9 @@ function renderModels(st){const tb=$('#models');tb.innerHTML='';const f=$('#mFil
       el('td',{},el('div',{class:'mono'},r.model),el('div',{class:'small mute'},[r.provider?(r.pointer?'快捷指针 · '+r.provider:r.provider):'',r.upstream&&r.upstream!==r.model?'→ '+r.upstream:''].filter(Boolean).join(' ')),(r.old_names||[]).length?el('div',{class:'small mute'},'兼容旧名：'+r.old_names.join(', ')):null),
       el('td',{},src,info,cands,r.error?el('div',{class:'small',style:'color:var(--bad)'},r.error):null),
       el('td',{},r.prompt?el('div',{class:'prev',title:r.prompt},r.prompt):el('span',{class:'mute small'},'（不注入）')),
-      el('td',{},el('button',{onclick:()=>openEdit(r)},'编辑'))))}}
+      el('td',{},el('button',{onclick:()=>openEdit(r)},'编辑'),(S.manual_models||[]).includes(r.model)?el('button',{onclick:()=>act('models/manual',{model:r.model,remove:true},'已移除手动模型')},'移除手动'):null)))}
+  if(!shown)tb.append(el('tr',{},el('td',{colspan:4,class:'mute'},rows.length?'没有符合筛选条件的模型。':'未加载到模型。请查看上方错误详情，手动刷新或输入模型名。')))
+}
 $('#mFilter').oninput=()=>S&&renderModels(S.status||{});$('#onlyPrompt').onchange=()=>S&&renderModels(S.status||{});
 function renderLists(st){const u=st.unmatched||[];$('#unmCount').textContent=u.length;$('#unmatched').innerHTML='';
   for(const m of u)$('#unmatched').append(el('div',{},m));
@@ -272,7 +296,7 @@ $('#eSaveFile').onclick=async()=>{const k=fileByLabel[$('#eFile').value];if(!k)r
 $('#eNone').onclick=async()=>{if(await act('override',{model:cur.model,type:'none'}))closeEdit()};
 $('#eClear').onclick=async()=>{if(await act('override',{model:cur.model,type:'clear'}))closeEdit()};
 $('#saveDefault').onclick=()=>act('default',{text:$('#defaultPrompt').value});
-if(storedManagementKey()){load().then(()=>{if(!S)showAuth()})}else{showAuth()}
+if(storedManagementKey()){load()}else{showAuth()}
 setInterval(()=>{if(S&&!polling&&$('#editDlg').classList.contains('hidden')&&document.visibilityState==='visible')load()},15000);
 </script>
 </body>

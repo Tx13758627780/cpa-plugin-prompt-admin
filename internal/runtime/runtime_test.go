@@ -152,6 +152,17 @@ func TestReconfigureKeepsPreviousEngine(t *testing.T) {
 
 func TestRegistrationShape(t *testing.T) {
 	reg := ManagementRegistration()
+	for _, path := range []string{"/plugins/prompt-admin/models/refresh", "/plugins/prompt-admin/models/manual"} {
+		found := false
+		for _, route := range reg.Routes {
+			if route.Path == path && route.Method == http.MethodPost {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing model route %s", path)
+		}
+	}
 	if len(reg.Resources) != 1 || reg.Resources[0].Path != "/index.html" || reg.Resources[0].Menu != "模型提示词" {
 		t.Fatalf("resource = %+v", reg.Resources)
 	}

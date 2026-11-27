@@ -42,3 +42,28 @@ func TestRejectsBadURL(t *testing.T) {
 		t.Fatal("ftp url accepted")
 	}
 }
+
+func TestHostConfigPath(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "config.yaml"},
+		{[]string{"-config", "/etc/cpa/custom.yaml"}, "/etc/cpa/custom.yaml"},
+		{[]string{"--config=/etc/cpa/custom.yaml"}, "/etc/cpa/custom.yaml"},
+		{[]string{"-config=custom.yaml"}, "custom.yaml"},
+	} {
+		if got := hostConfigPath(tc.args); got != tc.want {
+			t.Fatalf("%v => %s", tc.args, got)
+		}
+	}
+	cfg, err := Parse([]byte("cpa_url: https://proxy.example.com/prefix/v1\n"))
+	if err != nil || !cfg.CPAURLExplicit {
+		t.Fatalf("explicit URL lost: %+v %v", cfg, err)
+	}
+	for _, base := range []string{"https://secret@example.com", "https://proxy.example.com?key=secret"} {
+		if _, err := Parse([]byte("cpa_url: " + base)); err == nil {
+			t.Fatalf("accepted %s", base)
+		}
+	}
+}

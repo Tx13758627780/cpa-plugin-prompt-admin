@@ -43,6 +43,7 @@ type Choice struct {
 }
 
 type State struct {
+	ManualModels  []string            `json:"manual_models,omitempty"`
 	Repos         []Repo              `json:"repos"`
 	Overrides     map[string]Override `json:"overrides"`
 	Local         map[string]string   `json:"local"`
@@ -53,6 +54,7 @@ type State struct {
 }
 
 type diskState struct {
+	ManualModels  []string            `json:"manual_models,omitempty"`
 	Repos         []Repo              `json:"repos"`
 	Overrides     map[string]Override `json:"overrides"`
 	Local         map[string]string   `json:"local"`
@@ -96,6 +98,7 @@ func loadState(path string) State {
 	}
 	st := State{
 		Repos:         disk.Repos,
+		ManualModels:  disk.ManualModels,
 		Overrides:     disk.Overrides,
 		Local:         disk.Local,
 		Choices:       disk.Choices,
@@ -113,6 +116,7 @@ func saveState(path string, st State) error {
 	st.normalize()
 	disk := diskState{
 		Repos:         st.Repos,
+		ManualModels:  st.ManualModels,
 		Overrides:     st.Overrides,
 		Local:         st.Local,
 		Choices:       st.Choices,
